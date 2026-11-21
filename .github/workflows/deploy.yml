@@ -1,5 +1,12 @@
 name: Deploy to GitHub Pages
 
+# LƯU Ý: Workflow này dùng GitHub Actions để deploy Pages.
+# Trước lần chạy đầu tiên, cần bật Pages trong cài đặt repo:
+#   Settings → Pages → Build and deployment → Source: "GitHub Actions" → Save
+# Nếu chưa bật, job "deploy" sẽ lỗi 404: "Failed to create deployment ...
+# Ensure GitHub Pages has been enabled".
+# Site sẽ live tại: https://longcaotien.github.io/sn-phgt/
+
 on:
   push:
     branches: [main]
@@ -18,14 +25,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
@@ -36,5 +48,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
