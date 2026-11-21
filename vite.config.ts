@@ -12,6 +12,12 @@ const __dirname = path.dirname(__filename);
 export default defineConfig({
   base: "./", // relative paths so it works on GitHub Pages (/sn-phgt/)
   plugins: [react(), tailwindcss(), viteSingleFile()],
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: true, // cho phép preview host của sandbox (.e2b.app)
+  },
+  preview: { host: true, allowedHosts: true },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
