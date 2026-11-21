@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import RainCanvas from "../RainCanvas";
 import Statue, { type Attack, type Gaze } from "./Statue";
-import { avatar, hall, heroKneel, heroStand, s1, s2, s3 } from "./assets";
+import BossFight, { BOSS_MAX_HP, type BossStats } from "./BossFight";
+import { avatar, bossIdle, hall, heroKneel, heroStand, s1, s2, s3 } from "./assets";
 
-type Phase = "title" | "quest" | "pray" | "awaken" | "dodge" | "dead" | "clear";
+type Phase = "title" | "quest" | "pray" | "awaken" | "dodge" | "boss" | "dead" | "clear";
 type Threat = { lanes: number[]; mode: "warn" | "strike"; id: number };
 type Pop = { id: number; text: string; kind: "perfect" | "dodge" | "hit" };
 
@@ -56,6 +57,8 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   const [strikeKey, setStrikeKey] = useState(0);
   const [hitKey, setHitKey] = useState(0);
   const [runId, setRunId] = useState(0);
+  const [bossRun, setBossRun] = useState(0);
+  const [bossStats, setBossStats] = useState<BossStats | null>(null);
 
   const phaseRef = useRef<Phase>("title");
   const hpRef = useRef(MAX_HP);
@@ -64,7 +67,8 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   const threatRef = useRef<Threat | null>(null);
   const escapeRef = useRef(0);
   const invulnRef = useRef(0);
-  const deathFrom = useRef<"pray" | "dodge">("pray");
+  const deathFrom = useRef<"pray" | "dodge" | "boss">("pray");
+  const bossProgressRef = useRef(BOSS_MAX_HP);
   const idRef = useRef(0);
   const popTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const tilt = useAnimationControls();
@@ -117,7 +121,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
 
   // ---------- Chết ----------
   useEffect(() => {
-    if (hp <= 0 && (phase === "pray" || phase === "dodge")) {
+    if (hp <= 0 && (phase === "pray" || phase === "dodge" || phase === "boss")) {
       deathFrom.current = phase;
       setPhase("dead");
       setThreatBoth(null);
@@ -236,7 +240,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         setThreatBoth(null);
         await sleep(520);
       }
-      if (!cancelled && hpRef.current > 0) setPhase("clear");
+      if (!cancelled && hpRef.current > 0) setPhase("boss");
     })();
 
     return () => {
@@ -252,7 +256,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     setShattered(true);
     setStrikeKey((k) => k + 1);
     setShakeKey((k) => k + 1);
-    const t = setTimeout(() => setReward(true), 2800);
+    const t = setTimeout(() => setReward(true), 2000);
     return () => clearTimeout(t);
   }, [phase]);
 
@@ -290,6 +294,20 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   }, [moveTo]);
 
   // ---------- Hành động ----------
+  const heal = useCallback((n: number) => {
+    hpRef.current = Math.min(MAX_HP, hpRef.current + n);
+    setHp(hpRef.current);
+  }, []);
+
+  const onBossProgress = useCallback((v: number) => {
+    bossProgressRef.current = v;
+  }, []);
+
+  const onBossVictory = useCallback((stats: BossStats) => {
+    setBossStats(stats);
+    setPhase("clear");
+  }, []);
+
   const startPray = () => {
     hpRef.current = MAX_HP;
     setHp(MAX_HP);
@@ -308,6 +326,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     setThreatBoth(null);
     setPhase(deathFrom.current);
     setRunId((r) => r + 1);
+    setBossRun((r) => r + 1);
   };
 
   const replay = () => {
@@ -316,6 +335,9 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     setAwake(false);
     setPerfects(0);
     setWave(0);
+    setBossStats(null);
+    bossProgressRef.current = BOSS_MAX_HP;
+    setBossRun(0);
     laneRef.current = 1;
     setLane(1);
     startPray();
@@ -343,7 +365,13 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     return null;
   }, [phase, gaze]);
 
-  const rank = hp >= MAX_HP && perfects >= 6 ? "S" : hp >= 2 ? "A" : "B";
+  const rank = useMemo(() => {
+    const flawlessBoss = bossStats ? bossStats.misses === 0 : false;
+    if (hp >= MAX_HP && perfects >= 6 && flawlessBoss) return "S+";
+    if (hp >= MAX_HP && perfects >= 4) return "S";
+    if (hp >= 2) return "A";
+    return "B";
+  }, [hp, perfects, bossStats]);
 
   const confetti = useMemo(
     () =>
@@ -500,7 +528,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
           </motion.div>
         ))}
 
-        {phase !== "title" && phase !== "quest" && (
+        {phase !== "title" && phase !== "quest" && phase !== "boss" && (
           <motion.div
             className="pointer-events-none absolute z-20"
             style={{ height: "min(34svh, 52vw)", aspectRatio: "2/3", x: "-50%" }}
@@ -578,6 +606,22 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         <RainCanvas rain={false} intensity={1} />
         <div className="mist pointer-events-none absolute -inset-x-20 bottom-0 h-1/3 bg-[radial-gradient(ellipse_at_center,rgba(120,140,255,0.16),transparent_65%)]" />
       </div>
+
+      {/* ======= BOSS CUỐI ======= */}
+      {(phase === "boss" || (phase === "dead" && deathFrom.current === "boss")) && (
+        <div className="absolute inset-0 z-[35]">
+          <BossFight
+            key={`boss-${bossRun}`}
+            hp={hp}
+            maxHp={MAX_HP}
+            startHp={bossProgressRef.current}
+            onProgress={onBossProgress}
+            onDamage={damage}
+            onHeal={heal}
+            onVictory={onBossVictory}
+          />
+        </div>
+      )}
 
       {/* Hiệu ứng toàn màn hình */}
       <div key={`s${strikeKey}`} className={`pointer-events-none absolute inset-0 z-30 bg-white mix-blend-screen opacity-0 ${strikeKey ? "strike-flash" : ""}`} />
@@ -734,36 +778,86 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         {phase === "title" && (
           <motion.div
             key="title"
-            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#02030a] text-center"
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-[#04020a] px-5 text-center"
             exit={{ opacity: 0 }}
             transition={{ duration: 1.2 }}
           >
+            {/* mặt tượng thần phía sau */}
+            <motion.img
+              src={bossIdle}
+              alt=""
+              className="pointer-events-none absolute inset-x-0 top-0 h-full w-full object-cover object-top opacity-[0.32]"
+              initial={{ scale: 1.4, opacity: 0 }}
+              animate={{ scale: 1.05, opacity: 0.32 }}
+              transition={{ duration: 4, ease: "easeOut" }}
+              style={{ mixBlendMode: "screen", filter: "saturate(.45) brightness(.85) blur(1px)" }}
+            />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_35%,rgba(255,40,20,0.22),transparent_60%)]" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#04020a] via-[#04020a]/40 to-[#04020a]/80" />
             <RainCanvas rain={false} />
-            <motion.div
-              initial={{ opacity: 0, letterSpacing: "1em" }}
-              animate={{ opacity: 1, letterSpacing: "0.5em" }}
-              transition={{ duration: 1.6 }}
-              className="font-sys text-xs text-sky-300 text-glow sm:text-sm"
-            >
-              CHƯƠNG II
-            </motion.div>
-            <motion.h1
-              initial={{ opacity: 0, scale: 1.4, filter: "blur(18px)" }}
-              animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-              transition={{ delay: 0.8, duration: 1.5, ease: "easeOut" }}
-              className="mt-4 font-sys text-5xl font-black text-white sm:text-8xl"
-              style={{ textShadow: "0 0 20px #f33, 0 0 60px #a00" }}
-            >
-              HỒNG NGỤC
-            </motion.h1>
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 2.0, duration: 1 }}
-              className="mt-5 text-xs uppercase tracking-[0.4em] text-violet-200/80 sm:text-sm"
-            >
-              Hầm ngục kép · Ba tượng thần
-            </motion.p>
+
+            <div className="relative z-10 flex flex-col items-center">
+              <motion.div
+                initial={{ opacity: 0, letterSpacing: "1em" }}
+                animate={{ opacity: 1, letterSpacing: "0.5em" }}
+                transition={{ duration: 1.6 }}
+                className="font-sys text-[10px] text-sky-300 text-glow sm:text-sm"
+              >
+                CHƯƠNG II
+              </motion.div>
+
+              <motion.h1
+                initial={{ opacity: 0, scale: 1.3, filter: "blur(24px)" }}
+                animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                transition={{ delay: 0.7, duration: 1.6, ease: "easeOut" }}
+                className="title-grad-red mt-3 font-sys text-5xl font-black tracking-[0.08em] sm:text-8xl"
+              >
+                HỒNG NGỤC
+              </motion.h1>
+
+              <motion.div
+                initial={{ scaleX: 0, opacity: 0 }}
+                animate={{ scaleX: 1, opacity: 1 }}
+                transition={{ delay: 1.7, duration: 1 }}
+                className="mt-4 h-px w-52 bg-gradient-to-r from-transparent via-red-500 to-transparent sm:w-80"
+              />
+
+              <motion.p
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.9, duration: 1 }}
+                className="mt-4 text-[11px] uppercase tracking-[0.35em] text-violet-200/85 sm:text-sm"
+              >
+                Hầm ngục kép · Ba tượng thần
+              </motion.p>
+
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 2.4, duration: 1 }}
+                className="sys-panel-danger sys-cut mt-6 flex items-center gap-3 px-4 py-2.5"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+                </span>
+                <span className="font-sys text-[8px] tracking-[0.28em] text-red-200 sm:text-[10px]">
+                  BOSS ẨN · CẤP SSS · TƯỢNG THẦN MỈM CƯỜI
+                </span>
+              </motion.div>
+
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: [0, 0.8, 0.35, 0.8] }}
+                transition={{ delay: 2.9, duration: 2.4, repeat: Infinity }}
+                className="mt-5 font-sys text-[8px] tracking-[0.4em] text-sky-300/60"
+              >
+                ĐANG KẾT NỐI…
+              </motion.p>
+            </div>
+
+            <div className="absolute inset-x-0 top-0 z-10 h-[6%] bg-black" />
+            <div className="absolute inset-x-0 bottom-0 z-10 h-[6%] bg-black" />
           </motion.div>
         )}
       </AnimatePresence>
@@ -786,14 +880,35 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
               className="sys-panel w-full max-w-md p-1"
             >
               <div className="border border-sky-400/30 p-5 sm:p-7">
-                <div className="text-center font-sys text-[11px] tracking-[0.4em] text-sky-300 text-glow">[ NHIỆM VỤ ]</div>
+                <div className="text-center font-sys text-[11px] tracking-[0.4em] text-sky-300 text-glow">[ NHIỆM VỤ ĐẶC BIỆT ]</div>
                 <div className="my-3 h-px border-run" />
                 <h3 className="text-center font-sys text-lg font-bold text-white sm:text-xl">SỐNG SÓT</h3>
                 <p className="mt-1 text-center text-xs text-sky-100/60">Dungeon Kép · Hồng Ngục</p>
+
+                <div className="relative mt-4 overflow-hidden border border-red-500/30 bg-red-950/20">
+                  <img
+                    src={bossIdle}
+                    alt=""
+                    className="absolute inset-y-0 right-0 h-full w-2/5 object-cover object-top opacity-50"
+                    style={{ mixBlendMode: "screen", maskImage: "linear-gradient(to right, transparent, #000 45%)" }}
+                  />
+                  <div className="relative p-3">
+                    <div className="font-sys text-[8px] tracking-[0.35em] text-red-300">BOSS CUỐI · CẤP SSS</div>
+                    <div className="mt-1 font-sys text-sm font-black tracking-[0.14em] text-white" style={{ textShadow: "0 0 16px #f00" }}>
+                      TƯỢNG THẦN MỈM CƯỜI
+                    </div>
+                    <div className="mt-1 text-[10px] leading-relaxed text-red-100/65">
+                      3 thanh máu · 3 kỹ năng đặc biệt: <b className="text-red-300">Trừng Phạt</b>, <b className="text-amber-300">Cuồng Tiếng Cười</b>,{" "}
+                      <b className="text-pink-300">Nắm Đấm Thần</b>.
+                    </div>
+                  </div>
+                </div>
+
                 <ol className="mt-4 space-y-2 text-sm leading-relaxed text-sky-100/85">
                   <li><b className="text-sky-300">1.</b> Quỳ gối và cầu nguyện trước ba tượng thần.</li>
                   <li><b className="text-sky-300">2.</b> Khi tượng thần nhìn xuống, <b className="text-red-300">tuyệt đối không ngẩng đầu</b>.</li>
                   <li><b className="text-sky-300">3.</b> Khi chúng thức tỉnh, hãy né qua {TOTAL_WAVES} đợt trừng phạt.</li>
+                  <li><b className="text-sky-300">4.</b> Bước vào tầng sâu nhất và <b className="text-red-300">đánh bại boss</b> bằng cách né đòn, chịu đòn và phản công đúng nhịp.</li>
                 </ol>
                 <p className="mt-4 text-center text-xs text-red-300/90">Thất bại: <b>CÁI CHẾT</b></p>
                 <button
@@ -852,11 +967,14 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         {phase === "clear" && reward && (
           <motion.div
             key="reward"
-            className="absolute inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-6 backdrop-blur-[2px]"
+            className="absolute inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/65 px-3 py-8 backdrop-blur-[3px]"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 1 }}
           >
+            {/* hào quang vàng */}
+            <div className="pointer-events-none absolute left-1/2 top-1/3 h-[70vh] w-[70vh] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,190,80,0.22),transparent_65%)] blur-2xl" />
+            <div className="rune-spin pointer-events-none absolute left-1/2 top-1/2 h-[86vh] w-[86vh] -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-400/10" />
             {confetti.map((c, i) => (
               <span
                 key={i}
@@ -871,54 +989,119 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                 }}
               />
             ))}
+
             <motion.div
-              initial={{ scale: 0.7, opacity: 0, y: 40 }}
+              initial={{ scale: 0.72, opacity: 0, y: 44 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              transition={{ type: "spring", stiffness: 120, damping: 14, delay: 0.2 }}
-              className="sys-panel relative w-full max-w-lg p-1"
+              transition={{ type: "spring", stiffness: 110, damping: 14, delay: 0.2 }}
+              className="sys-panel sys-cut relative w-full max-w-lg p-1"
             >
-              <div className="border border-sky-400/30 p-6 text-center sm:p-8">
-                <div className="font-sys text-[11px] tracking-[0.4em] text-sky-300 text-glow">[ DUNGEON ĐÃ HOÀN THÀNH ]</div>
+              <div className="frame-sweep absolute inset-x-0 top-0 h-[2px]" />
+              <div className="relative border border-sky-400/20 px-5 pb-6 pt-7 text-center sm:px-7">
+                <div className="font-sys text-[10px] tracking-[0.4em] text-sky-300 text-glow">
+                  [ HỒNG NGỤC · ĐÃ CHINH PHỤC ]
+                </div>
+
+                <motion.div
+                  initial={{ scale: 0, rotate: -30, opacity: 0 }}
+                  animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                  transition={{ type: "spring", stiffness: 180, damping: 12, delay: 0.55 }}
+                  className="relative mx-auto mt-4 flex h-20 w-20 items-center justify-center rounded-full sm:h-24 sm:w-24"
+                  style={{
+                    background: "radial-gradient(circle, rgba(255,214,120,.22), rgba(120,60,10,.15) 60%, transparent 72%)",
+                    border: "1px solid rgba(255,205,110,.65)",
+                    boxShadow: "0 0 34px rgba(255,190,70,.55), inset 0 0 24px rgba(255,190,70,.35)",
+                  }}
+                >
+                  <span className="font-sys text-3xl font-black text-amber-200 sm:text-4xl" style={{ textShadow: "0 0 22px #ffb300" }}>
+                    {rank}
+                  </span>
+                  <span className="absolute -bottom-2 bg-[#08111f] px-2 font-sys text-[7px] tracking-[0.25em] text-amber-300/90">
+                    RANK
+                  </span>
+                </motion.div>
+
                 <motion.h2
-                  initial={{ letterSpacing: "0.8em", opacity: 0 }}
-                  animate={{ letterSpacing: "0.2em", opacity: 1 }}
-                  transition={{ delay: 0.5, duration: 1.2 }}
-                  className="mt-3 font-sys text-4xl font-black text-white text-glow sm:text-5xl"
+                  initial={{ letterSpacing: "0.7em", opacity: 0 }}
+                  animate={{ letterSpacing: "0.18em", opacity: 1 }}
+                  transition={{ delay: 0.45, duration: 1.1 }}
+                  className="mt-5 font-sys text-4xl font-black text-white sm:text-5xl"
+                  style={{ textShadow: "0 0 24px rgba(79,168,255,.9), 0 0 70px rgba(168,85,255,.6)" }}
                 >
                   LEVEL UP!
                 </motion.h2>
+
                 <div className="my-4 h-px border-run" />
 
-                <div className="grid grid-cols-3 gap-2 text-center">
+                {/* boss đã bị đánh bại */}
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.8, duration: 0.7 }}
+                  className="relative overflow-hidden border border-red-500/30 bg-red-950/25 px-3 py-2.5 text-left"
+                >
+                  <img
+                    src={bossIdle}
+                    alt=""
+                    className="absolute -right-4 -top-3 h-24 w-24 object-cover opacity-30"
+                    style={{ mixBlendMode: "screen", filter: "saturate(.4)" }}
+                  />
+                  <div className="relative flex items-center gap-2">
+                    <span className="font-sys text-[8px] tracking-[0.3em] text-red-300">BOSS ĐÃ BỊ ĐÁNH BẠI</span>
+                    <span className="h-px flex-1 bg-gradient-to-r from-red-500/60 to-transparent" />
+                  </div>
+                  <div className="relative mt-1 font-sys text-sm font-black tracking-[0.12em] text-white" style={{ textShadow: "0 0 14px #ff3a20" }}>
+                    TƯỢNG THẦN MỈM NỤ CƯỜI
+                  </div>
+                  <div className="relative mt-1 font-sys text-[8px] tracking-[0.22em] text-red-200/70">
+                    {bossStats ? `${bossStats.counters} ĐÒN PHẢN CÔNG · COMBO CAO NHẤT ×${bossStats.bestCombo}` : "SẠCH BÓNG TỰ TRỌNG"}
+                  </div>
+                </motion.div>
+
+                <div className="mt-3 grid grid-cols-4 gap-1.5 text-center sm:gap-2">
                   {[
-                    ["HP CÒN LẠI", `${hp}/${MAX_HP}`],
-                    ["NÉ HOÀN HẢO", String(perfects)],
-                    ["XẾP HẠNG", rank],
-                  ].map(([k, v]) => (
-                    <div key={k} className="border border-sky-500/30 bg-sky-950/40 py-2">
-                      <div className="font-sys text-xl font-bold text-white text-glow sm:text-2xl">{v}</div>
-                      <div className="font-sys text-[8px] tracking-[0.2em] text-sky-300/80">{k}</div>
-                    </div>
+                    ["HP", `${hp}/${MAX_HP}`],
+                    ["NÉ ĐỈNH", String(perfects)],
+                    ["COMBO", bossStats ? `×${bossStats.bestCombo}` : "—"],
+                    ["RANK", rank],
+                  ].map(([k, v], i) => (
+                    <motion.div
+                      key={k}
+                      initial={{ opacity: 0, y: 14 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 1 + i * 0.1, duration: 0.45 }}
+                      className="border border-sky-500/25 bg-sky-950/40 py-2"
+                    >
+                      <div className="font-sys text-lg font-bold text-white text-glow sm:text-xl">{v}</div>
+                      <div className="font-sys text-[7px] tracking-[0.18em] text-sky-300/80">{k}</div>
+                    </motion.div>
                   ))}
                 </div>
 
-                <div className="mt-5 rounded border border-violet-400/40 bg-violet-950/30 p-4">
-                  <div className="font-sys text-[10px] tracking-[0.3em] text-violet-300">PHẦN THƯỞNG ĐẶC BIỆT</div>
+                <motion.div
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 1.2, duration: 0.7 }}
+                  className="mt-4 rounded border border-violet-400/40 bg-gradient-to-b from-violet-950/40 to-fuchsia-950/20 p-4"
+                >
+                  <div className="font-sys text-[10px] tracking-[0.3em] text-violet-300">[ PHẦN THƯỞNG SINH NHẬT ]</div>
                   <p className="mt-2 text-base font-bold text-white sm:text-lg">
-                    Chúc mừng sinh nhật <span className="text-sky-300 text-glow">Phạm Hoàng Gia Trí</span> 🎂
+                    Chúc mừng sinh nhật <span className="title-grad font-sys">Phạm Hoàng Gia Trí</span> 🎂
                   </p>
-                  <p className="mt-2 text-sm leading-relaxed text-sky-100/80">
-                    Sinh nhật 30/11 – bạn đã vượt qua Hồng Ngục và bước sang một cấp độ mới. Chúc bạn tuổi mới thật mạnh mẽ,
-                    bản lĩnh, gặp nhiều may mắn và mọi mục tiêu đều được <b className="text-violet-300">ARISE</b>!
+                  <p className="mt-2 text-[13px] leading-relaxed text-sky-100/80 sm:text-sm">
+                    <b className="text-sky-300">30/11</b> – bạn đã đi qua cả ba tượng thần, sống sót qua {TOTAL_WAVES} đợt trừng phạt và
+                    hạ gục kẻ canh giữ tầng sâu nhất. Chúc tuổi mới thật mạnh mẽ, bản lĩnh, luôn đứng dậy sau mỗi lần gục ngã và để mọi
+                    mục tiêu đều được <b className="text-violet-300">ARISE</b>.
                   </p>
-                </div>
+                </motion.div>
 
-                <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
                   <button
                     onClick={replay}
-                    className="flex-1 border border-sky-400 bg-sky-500/20 py-3 font-sys text-xs font-bold tracking-[0.3em] text-white transition hover:bg-sky-500/40 active:scale-95"
+                    className="group relative flex-1 overflow-hidden border border-sky-400 bg-sky-500/20 py-3 font-sys text-xs font-bold tracking-[0.3em] text-white transition hover:bg-sky-500/40 hover:shadow-[0_0_30px_rgba(79,168,255,.6)] active:scale-95"
                   >
-                    CHƠI LẠI
+                    <span className="relative z-10">CHƠI LẠI</span>
+                    <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-sky-200/40 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
                   </button>
                   <button
                     onClick={onExit}
@@ -927,6 +1110,10 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                     VỀ TRANG ĐẦU
                   </button>
                 </div>
+
+                <p className="mt-3 font-sys text-[7px] tracking-[0.3em] text-sky-300/40">
+                  HỆ THỐNG · GHI NHẬN NGƯỜI CHƠI ĐÃ TRỞ THÀNH BẬC THẦY CỦA BÓNG TỐI
+                </p>
               </div>
             </motion.div>
           </motion.div>

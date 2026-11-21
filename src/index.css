@@ -127,3 +127,239 @@ body,
 
 .text-glow { text-shadow: 0 0 10px rgba(79, 168, 255, 0.9), 0 0 30px rgba(79, 168, 255, 0.5); }
 .text-glow-purple { text-shadow: 0 0 14px rgba(168, 85, 255, 0.95), 0 0 40px rgba(139, 61, 255, 0.7); }
+
+/* =========================================================
+   CHƯƠNG II — BOSS CUỐI: TƯỢNG THẦN MỈM CƯỜI
+   ========================================================= */
+
+/* thở / lớn dần của boss */
+@keyframes bossBreath {
+  0%, 100% { transform: scale(1) translateY(0); }
+  50% { transform: scale(1.018) translateY(-0.7%); }
+}
+.boss-breath { animation: bossBreath 5.5s ease-in-out infinite; }
+
+@keyframes bossLoom {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-12px) scale(1.012); }
+}
+.boss-loom { animation: bossLoom 8s ease-in-out infinite; }
+
+/* hào quang đập theo nhịp tim */
+@keyframes auraPulse {
+  0%, 100% { opacity: 0.35; transform: translate(-50%, 0) scale(1); }
+  50% { opacity: 0.75; transform: translate(-50%, 0) scale(1.08); }
+}
+.boss-aura { animation: auraPulse 4s ease-in-out infinite; }
+
+@keyframes runeSpin { to { transform: rotate(360deg); } }
+.rune-spin { animation: runeSpin 34s linear infinite; }
+.rune-spin-rev { animation: runeSpin 22s linear infinite reverse; }
+
+/* cười điên loạn */
+@keyframes laughShake {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  12% { transform: translate(-9px, 5px) rotate(-0.35deg); }
+  26% { transform: translate(8px, -7px) rotate(0.4deg); }
+  41% { transform: translate(-7px, -4px) rotate(-0.25deg); }
+  58% { transform: translate(6px, 6px) rotate(0.3deg); }
+  74% { transform: translate(-4px, 2px) rotate(-0.15deg); }
+  88% { transform: translate(2px, -2px) rotate(0.1deg); }
+}
+.laugh-shake { animation: laughShake 0.5s ease-out; }
+
+@keyframes shockwave {
+  0% { transform: translate(-50%, -50%) scale(0.15); opacity: 0.95; }
+  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
+}
+.shockwave {
+  border: 2px solid rgba(255, 90, 60, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 40px rgba(255, 60, 30, 0.6), inset 0 0 50px rgba(255, 90, 50, 0.35);
+  animation: shockwave 1.5s ease-out infinite;
+}
+
+/* trừng phạt: cột sáng từ mắt */
+@keyframes gazeBeam {
+  0% { opacity: 0; transform: translateX(-50%) scaleY(0.2); }
+  18% { opacity: 1; transform: translateX(-50%) scaleY(1); }
+  100% { opacity: 0.9; transform: translateX(-50%) scaleY(1); }
+}
+.gaze-beam { animation: gazeBeam 0.35s ease-out both; transform-origin: top center; }
+
+@keyframes beamStrike {
+  0% { opacity: 0.3; }
+  4% { opacity: 1; }
+  30% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+.beam-strike { animation: beamStrike 0.55s ease-out forwards; }
+
+/* nhịp canh (fist) */
+@keyframes pressPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 90, 60, 0.45); }
+  50% { box-shadow: 0 0 0 14px rgba(255, 90, 60, 0); }
+}
+.press-pulse { animation: pressPulse 1.1s ease-out infinite; }
+
+@keyframes zoneGlow {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.zone-glow { animation: zoneGlow 0.8s ease-in-out infinite; }
+
+/* chém phản công */
+@keyframes slashSweep {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(-38deg) scaleX(0.15) scaleY(0.4); }
+  16% { opacity: 1; transform: translate(-50%, -50%) rotate(-38deg) scaleX(1.05) scaleY(1); }
+  55% { opacity: 1; transform: translate(-50%, -50%) rotate(-38deg) scaleX(1.1) scaleY(0.8); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(-38deg) scaleX(1.2) scaleY(0.05); }
+}
+.slash-sweep { animation: slashSweep 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+
+@keyframes slashRail {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(38deg) scaleX(0); }
+  25% { opacity: 1; transform: translate(-50%, -50%) rotate(38deg) scaleX(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(38deg) scaleX(1.15); }
+}
+.slash-rail { animation: slashRail 0.45s ease-out forwards; }
+
+/* thanh máu boss bị đánh */
+@keyframes bossBarHit {
+  0% { filter: brightness(3.4) saturate(0.2); transform: translateX(0); }
+  25% { transform: translateX(5px); }
+  50% { transform: translateX(-4px); }
+  75% { transform: translateX(2px); }
+  100% { filter: brightness(1); transform: translateX(0); }
+}
+.boss-bar-hit { animation: bossBarHit 0.42s ease-out; }
+
+/* vỡ thanh máu */
+@keyframes barShatter {
+  0% { opacity: 1; transform: scaleY(1); }
+  100% { opacity: 0; transform: scaleY(2.6) translateY(-6px); filter: blur(6px); }
+}
+.bar-shatter { animation: barShatter 0.7s ease-out forwards; }
+
+/* chữ glitch mạnh cho boss */
+@keyframes bossGlitch {
+  0%, 86%, 100% { transform: translate(0); clip-path: inset(0 0 0 0); text-shadow: 0 0 24px #ff2d1a, 0 0 70px #7a0000; }
+  88% { transform: translate(-6px, 2px); clip-path: inset(12% 0 58% 0); text-shadow: 4px 0 #00e5ff, -4px 0 #ff0033; }
+  91% { transform: translate(6px, -2px); clip-path: inset(62% 0 12% 0); text-shadow: -5px 0 #00e5ff, 5px 0 #ff0033; }
+  94% { transform: translate(-3px, 0); clip-path: inset(38% 0 40% 0); }
+}
+.boss-glitch { animation: bossGlitch 3.6s infinite; }
+
+@keyframes textBlurIn {
+  0% { opacity: 0; letter-spacing: 0.9em; filter: blur(18px); }
+  100% { opacity: 1; letter-spacing: 0.18em; filter: blur(0); }
+}
+.text-blur-in { animation: textBlurIn 1.3s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+/* chớp đỏ / trắng toàn màn */
+@keyframes redBloom {
+  0% { opacity: 0; }
+  12% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+.red-bloom { animation: redBloom 0.85s ease-out forwards; }
+
+@keyframes whiteBloom {
+  0% { opacity: 0; }
+  8% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.white-bloom { animation: whiteBloom 0.7s ease-out forwards; }
+
+/* quầng mắt boss */
+@keyframes eyeBurn {
+  0%, 100% { opacity: 0.7; filter: blur(5px); }
+  50% { opacity: 1; filter: blur(9px); }
+}
+.eye-burn { animation: eyeBurn 2.6s ease-in-out infinite; }
+
+/* vòng combo */
+@keyframes comboPop {
+  0% { transform: scale(1.6); opacity: 0; }
+  40% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.combo-pop { animation: comboPop 0.45s cubic-bezier(0.2, 0.9, 0.2, 1); }
+
+/* thanh thời gian kỹ năng */
+@keyframes cardTimer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.card-timer { transform-origin: left center; animation: cardTimer linear forwards; }
+
+/* khung HUD cắt góc */
+.sys-cut {
+  clip-path: polygon(0 12px, 12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+}
+.sys-panel-danger {
+  background: linear-gradient(180deg, rgba(48, 6, 10, 0.82), rgba(10, 2, 6, 0.88));
+  border: 1px solid rgba(255, 70, 50, 0.55);
+  box-shadow: 0 0 30px rgba(255, 40, 20, 0.28), inset 0 0 40px rgba(255, 40, 20, 0.12);
+  backdrop-filter: blur(7px);
+}
+.text-glow-red { text-shadow: 0 0 12px rgba(255, 60, 40, 0.95), 0 0 42px rgba(255, 0, 0, 0.6); }
+
+/* nền chuyển sắc chậm */
+@keyframes auroraShift {
+  0%, 100% { transform: translate3d(-4%, 0, 0) scale(1.05); opacity: 0.55; }
+  50% { transform: translate3d(4%, -2%, 0) scale(1.15); opacity: 0.85; }
+}
+.aurora { animation: auroraShift 16s ease-in-out infinite; }
+
+/* viền chạy quanh panel */
+@keyframes frameSweep {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+.frame-sweep {
+  background: linear-gradient(90deg, transparent, rgba(79, 168, 255, 0.9), rgba(168, 85, 255, 0.9), transparent, rgba(79, 168, 255, 0.9));
+  background-size: 300% 100%;
+  animation: frameSweep 6s linear infinite;
+}
+
+/* chữ gradient */
+.title-grad {
+  background: linear-gradient(180deg, #ffffff 0%, #cfe6ff 38%, #6db2ff 68%, #a855ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 18px rgba(79, 168, 255, 0.55));
+}
+.title-grad-red {
+  background: linear-gradient(180deg, #fff4f0 0%, #ffb1a0 35%, #ff4a2a 70%, #7a0010 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 22px rgba(255, 60, 30, 0.6));
+}
+
+/* nhiễu hạt nhẹ */
+@keyframes grainShift {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-2%, 1%); }
+  50% { transform: translate(1%, -2%); }
+  75% { transform: translate(2%, 2%); }
+  100% { transform: translate(0, 0); }
+}
+.grain {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.35) 0.5px, transparent 0.6px);
+  background-size: 3px 3px;
+  animation: grainShift 1.4s steps(3) infinite;
+}
+
+/* gợn sáng quét dọc */
+@keyframes sweepDown {
+  0% { transform: translateY(-30%); opacity: 0; }
+  20% { opacity: 0.55; }
+  100% { transform: translateY(130%); opacity: 0; }
+}
+.sweep-down { animation: sweepDown 4.5s ease-in-out infinite; }
+
+@keyframes floatUp {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  18% { opacity: 0.9; }
+  100% { transform: translateY(-72vh) scale(1.15); opacity: 0; }
+}

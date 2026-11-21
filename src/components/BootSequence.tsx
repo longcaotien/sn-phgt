@@ -7,6 +7,7 @@ const LINES = [
   "> Phát hiện Người chơi: PHẠM HOÀNG GIA TRÍ",
   "> Ngày kích hoạt: 30 / 11",
   "> Nhiệm vụ đặc biệt được mở khóa: SINH NHẬT",
+  "> Cảnh báo: một thực thể cấp SSS đang thức giấc ở tầng sâu nhất…",
 ];
 
 function Typed({ text, onDone }: { text: string; onDone: () => void }) {
@@ -67,8 +68,9 @@ export default function BootSequence({ onFinish }: { onFinish: () => void }) {
               initial={{ opacity: 0, scaleY: 0.05, scaleX: 0.6 }}
               animate={{ opacity: 1, scaleY: 1, scaleX: 1 }}
               transition={{ duration: 0.55, ease: [0.2, 0.9, 0.25, 1] }}
-              className="sys-panel relative mx-auto p-1"
+              className="sys-panel sys-cut relative mx-auto overflow-hidden p-1"
             >
+              <div className="frame-sweep absolute inset-x-0 top-0 h-px" />
               <div className="border border-sky-400/30 p-6 text-center sm:p-8">
                 <div className="mx-auto mb-4 flex h-9 w-9 items-center justify-center rounded-full border border-sky-300 font-sys text-lg text-sky-200 text-glow">
                   !
@@ -79,6 +81,10 @@ export default function BootSequence({ onFinish }: { onFinish: () => void }) {
                   Bạn đã được chọn làm <span className="text-sky-300 text-glow">Người Chơi</span>.
                 </p>
                 <p className="mt-2 text-sm text-sky-100/70">Hôm nay là ngày thức tỉnh của Phạm Hoàng Gia Trí.</p>
+                <div className="mt-4 flex items-center justify-center gap-2 border border-red-500/35 bg-red-950/30 px-2 py-1.5 font-sys text-[8px] tracking-[0.26em] text-red-300/90">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                  PHÁT HIỆN BOSS ẨN · CHƯƠNG II
+                </div>
               </div>
             </motion.div>
           )}

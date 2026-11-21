@@ -4,6 +4,7 @@ import RainCanvas from "./RainCanvas";
 import Countdown from "./Countdown";
 import jinwoo from "../assets/jinwoo.jpg";
 import bg from "../assets/bg.jpg";
+import { bossIdle } from "./chapter2/assets";
 
 const STATS = [
   { k: "SỨC MẠNH", v: 96 },
@@ -99,6 +100,12 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
       </motion.div>
       <div className="absolute inset-0 bg-gradient-to-r from-[#02030a] via-[#02030a]/70 to-transparent max-lg:via-[#02030a]/40" />
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_30%,rgba(79,100,255,0.25),transparent_60%)]" />
+      <div className="aurora pointer-events-none absolute -left-[18%] top-[-10%] h-[78vh] w-[78vh] rounded-full bg-[radial-gradient(circle,rgba(96,60,255,0.32),transparent_62%)] blur-3xl" />
+      <div
+        className="aurora pointer-events-none absolute -right-[12%] bottom-[-22%] h-[70vh] w-[70vh] rounded-full bg-[radial-gradient(circle,rgba(40,150,255,0.26),transparent_64%)] blur-3xl"
+        style={{ animationDelay: "-6s" }}
+      />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-400/50 to-transparent" />
 
       {/* Nhân vật */}
       <div className="pointer-events-none absolute top-0 h-[100svh] aspect-[2/3] right-[3vw] max-lg:left-1/2 max-lg:right-auto max-lg:-translate-x-1/2">
@@ -177,6 +184,42 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
         style={{ backgroundImage: "repeating-linear-gradient(0deg, #fff 0 1px, transparent 1px 3px)" }}
       />
 
+      {/* Khung HUD 4 góc */}
+      <div className="pointer-events-none absolute inset-3 z-20 hidden sm:block">
+        {[
+          "left-0 top-0 border-l border-t",
+          "right-0 top-0 border-r border-t",
+          "left-0 bottom-0 border-l border-b",
+          "right-0 bottom-0 border-r border-b",
+        ].map((cls) => (
+          <span key={cls} className={`absolute h-7 w-7 border-sky-400/40 ${cls}`} />
+        ))}
+      </div>
+
+      {/* teaser chương II */}
+      <motion.div
+        initial={{ opacity: 0, x: 24 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 2.6, duration: 1 }}
+        className="pointer-events-none absolute bottom-5 right-5 z-20 hidden w-44 xl:block"
+      >
+        <div className="sys-panel-danger sys-cut p-1">
+          <div className="relative overflow-hidden">
+            <img
+              src={bossIdle}
+              alt=""
+              className="h-24 w-full object-cover object-top opacity-70 transition-transform duration-1000 hover:scale-110"
+              style={{ mixBlendMode: "screen", filter: "saturate(.55) contrast(1.05)" }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0a0308] via-[#0a0308]/40 to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 p-2">
+              <div className="font-sys text-[7px] tracking-[0.3em] text-red-300/90">CHƯƠNG II · BOSS ẨN</div>
+              <div className="mt-0.5 font-sys text-[9px] font-black tracking-[0.1em] text-white">TƯỢNG THẦN MỈM CƯỜI</div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
       {/* Thanh trên */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -208,7 +251,7 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
         </motion.h2>
 
         <motion.h1 variants={item} className="relative mt-1 leading-[0.95]">
-          <span className="relative block text-[2.6rem] font-black uppercase text-white text-glow sm:text-6xl lg:text-7xl xl:text-8xl">
+          <span className="title-grad relative block text-[2.6rem] font-black uppercase sm:text-6xl lg:text-7xl xl:text-8xl">
             Gia Trí
             <span aria-hidden className="glitch-a absolute inset-0">Gia Trí</span>
             <span aria-hidden className="glitch-b absolute inset-0">Gia Trí</span>
@@ -225,7 +268,8 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
         </motion.p>
 
         {/* Bảng chỉ số */}
-        <motion.div variants={item} className="sys-panel relative mt-5 hidden max-w-md p-4 sm:block">
+        <motion.div variants={item} className="sys-panel sys-cut relative mt-5 hidden max-w-md overflow-hidden p-4 sm:block">
+          <div className="frame-sweep absolute inset-x-0 top-0 h-px" />
           <div className="mb-3 flex items-center justify-between font-sys text-[10px] tracking-[0.3em] text-sky-300">
             <span>CHỈ SỐ NGƯỜI CHƠI</span>
             <span className="text-violet-300">LV. MAX+1</span>
@@ -272,6 +316,17 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
               </motion.span>
             )}
           </AnimatePresence>
+        </motion.div>
+
+        <motion.div variants={item} className="mt-4 flex items-center gap-2 overflow-hidden sm:gap-3">
+          <span className="h-px w-5 shrink-0 bg-sky-500/60 sm:w-6" />
+          <span className="truncate font-sys text-[8px] tracking-[0.18em] text-sky-300/65 sm:text-[9px] sm:tracking-[0.28em]">
+            CHƯƠNG II · HỒNG NGỤC · 3 TƯỢNG THẦN
+          </span>
+          <span className="flex shrink-0 items-center gap-1 border border-red-500/40 bg-red-950/30 px-1.5 py-0.5 font-sys text-[7px] tracking-[0.18em] text-red-300">
+            <span className="h-1 w-1 animate-pulse rounded-full bg-red-500" />
+            BOSS ẨN
+          </span>
         </motion.div>
       </motion.section>
 
