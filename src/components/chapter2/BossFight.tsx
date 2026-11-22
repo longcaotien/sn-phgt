@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import RainCanvas from "../RainCanvas";
 import { avatar, bossArena, bossEnrage, bossIdle, heroKneel, heroStand } from "./assets";
+import { PlayerBehaviorTracker, type PredictionSnapshot, type SkillKind } from "./bossAI";
+import BossVfxCanvas, { type VfxBurst } from "./BossVfxCanvas";
 
-export const BOSS_MAX_HP = 300;
-const HIT_DMG = 50;
-const BAR_HP = 100;
+export const BOSS_MAX_HP = 360;
+const BAR_HP = 120;
 const LANE_X = [17, 50, 83];
+const LANE_NAMES = ["TRÁI", "GIỮA", "PHẢI"];
 
-export type BossStats = { counters: number; bestCombo: number; misses: number; hpLeft: number };
+export type BossStats = {
+  counters: number;
+  bestCombo: number;
+  misses: number;
+  hpLeft: number;
+  crits: number;
+  maxAdapt: number;
+};
 
 type Props = {
   hp: number;
@@ -21,44 +30,79 @@ type Props = {
   onVictory: (stats: BossStats) => void;
 };
 
-type SkillKind = "gaze" | "laugh" | "fist";
-type Skill = { kind: SkillKind; id: number; mode: "telegraph" | "active" };
-type Feedback = { id: number; text: string; sub?: string; kind: "perfect" | "good" | "bad" };
+type Skill = { kind: SkillKind; id: number; mode: "telegraph" | "active" | "counter"; aiLocked?: boolean };
+type Feedback = { id: number; text: string; sub?: string; kind: "crit" | "perfect" | "good" | "bad" | "warn" };
 
 const SKILL_INFO: Record<
   SkillKind,
-  { name: string; tag: string; hint: string; color: string; glyph: string }
+  { name: string; tag: string; hint: string; counterHint?: string; color: string }
 > = {
   gaze: {
     name: "TRỪNG PHẠT · NHÌN THẲNG",
-    tag: "GAZE OF THE GOD",
-    hint: "DI CHUYỂN SANG LÀN AN TOÀN",
+    tag: "GAZE OF GOD",
+    hint: "NÉ SANG LÀN AN TOÀN",
     color: "#ff4a2a",
-    glyph: "◉",
   },
   laugh: {
     name: "CUỒNG TIẾNG CƯỜI",
-    tag: "MADNESS LAUGH",
-    hint: "GIỮ ĐỂ CHỊU ĐÒN",
+    tag: "MADNESS ROAR",
+    hint: "GIỮ ĐỂ KÍCH HOẠT KHIÊN",
     color: "#ffb03d",
-    glyph: "◈",
   },
   fist: {
     name: "NẮM ĐẤM THẦN",
-    tag: "GOD'S FIST",
-    hint: "NHẤN ĐÚNG NHỊP ĐỂ PHẢN CÔNG",
+    tag: "DIVINE FIST",
+    hint: "NHẤN ĐÚNG VÙNG SÁNG ĐỂ PHẢN CÔNG",
     color: "#ff2d6b",
-    glyph: "✦",
+  },
+  judgment: {
+    name: "PHÁN XÉT KÉP · ĐỌC VỊ",
+    tag: "AI JUDGMENT",
+    hint: "NÉ TIA PHÁN XÉT → PHẢN ĐÒN NGAY",
+    counterHint: "PHẢN CÔNG CHỚP NHOÁNG! NHẤN [SPACE]",
+    color: "#c04aff",
   },
 };
 
 const BOSS_FORMS = {
-  calm: { eyes: [[41.4, 17.4], [58.6, 17.4]] as [number, number][], mouth: [50, 25.2] as [number, number] },
-  rage: { eyes: [[40.6, 26.6], [59.4, 26.6]] as [number, number][], mouth: [50, 34.6] as [number, number] },
+  calm: { eyes: [[43.0, 31.6], [56.5, 31.6]] as [number, number][], mouth: [50, 39.2] as [number, number] },
+  rage: { eyes: [[41.9, 38.0], [58.5, 38.0]] as [number, number][], mouth: [50, 44.4] as [number, number] },
 };
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function SkillGlyph({ kind, color }: { kind: SkillKind; color: string }) {
+  if (kind === "gaze") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke={color} strokeWidth="2">
+        <path d="M2 12s3.8-6 10-6 10 6 10 6-3.8 6-10 6-10-6-10-6Z" />
+        <circle cx="12" cy="12" r="2.8" fill={color} />
+      </svg>
+    );
+  }
+  if (kind === "laugh") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke={color} strokeWidth="2">
+        <circle cx="12" cy="12" r="3" fill={color} />
+        <path d="M7.5 7.5a6.5 6.5 0 0 1 9 0M5 5a10 10 0 0 1 14 0M7.5 16.5a6.5 6.5 0 0 0 9 0" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (kind === "judgment") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke={color} strokeWidth="2">
+        <polygon points="12,2 21,12 12,22 3,12" />
+        <circle cx="12" cy="12" r="3" fill={color} />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke={color} strokeWidth="2">
+      <path d="M13 2L4 14h7l-1 8 10-12h-7l0-8z" fill={color} />
+    </svg>
+  );
+}
 
 export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, onHeal, onVictory }: Props) {
   const [bossHp, setBossHp] = useState(startHp);
@@ -70,19 +114,20 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   const [combo, setCombo] = useState(0);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [intro, setIntro] = useState(startHp >= BOSS_MAX_HP);
-  const [enraged, setEnraged] = useState(startHp <= 200);
+  const [enraged, setEnraged] = useState(startHp <= 240);
   const [phaseCut, setPhaseCut] = useState(false);
   const [finalCut, setFinalCut] = useState(false);
   const [dying, setDying] = useState(false);
   const [win, setWin] = useState(false);
-  const [tapWindow, setTapWindow] = useState<{ id: number; dur: number } | null>(null);
+  const [tapWindow, setTapWindow] = useState<{ id: number; dur: number; isCounter?: boolean; shift?: number } | null>(null);
   const [durs, setDurs] = useState({ tele: 860, active: 1400 });
+  const trackerRef = useRef<PlayerBehaviorTracker | null>(null);
+  if (!trackerRef.current) trackerRef.current = new PlayerBehaviorTracker(true);
+  const [prediction, setPrediction] = useState<PredictionSnapshot>(() => trackerRef.current!.predict(1));
+  const [vfxBurst, setVfxBurst] = useState<VfxBurst | null>(null);
   const [flashKey, setFlashKey] = useState(0);
   const [redKey, setRedKey] = useState(0);
   const [hitKey, setHitKey] = useState(0);
-  const [slashKey, setSlashKey] = useState(0);
-  const [strikeKey, setStrikeKey] = useState(0);
-  const [laughKey, setLaughKey] = useState(0);
 
   const laneRef = useRef(1);
   const holdRef = useRef(false);
@@ -92,10 +137,13 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   const skillRef = useRef<Skill | null>(null);
   const startHpRef = useRef(startHp);
   const idRef = useRef(0);
+  const threatStartRef = useRef(0);
   const fbTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const tapResolver = useRef<((ok: boolean) => void) | null>(null);
+  const tapResolver = useRef<((res: "perfect" | "good" | "miss", offset?: number) => void) | null>(null);
   const tapStartRef = useRef(0);
   const tapDurRef = useRef(1);
+  const tapCounterRef = useRef(false);
+  const tapShiftRef = useRef(0);
 
   const sceneShake = useAnimationControls();
   const bossControls = useAnimationControls();
@@ -105,11 +153,21 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   }, [skill]);
 
   useEffect(() => {
+    const onKeyChange = () => {
+      if (!trackerRef.current) return;
+      trackerRef.current.refreshGeminiState();
+      setPrediction(trackerRef.current.predict(laneRef.current));
+    };
+    window.addEventListener("sl-gemini-key-changed", onKeyChange);
+    return () => window.removeEventListener("sl-gemini-key-changed", onKeyChange);
+  }, []);
+
+  useEffect(() => {
     hpRef.current = hp;
     const dead = hp <= 0;
     deadRef.current = dead;
     if (dead) {
-      tapResolver.current?.(false);
+      tapResolver.current?.("miss");
       tapResolver.current = null;
     }
   }, [hp]);
@@ -128,7 +186,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   const showFb = useCallback((text: string, sub: string | undefined, kind: Feedback["kind"]) => {
     clearTimeout(fbTimer.current);
     setFeedback({ id: ++idRef.current, text, sub, kind });
-    fbTimer.current = setTimeout(() => setFeedback(null), 1150);
+    fbTimer.current = setTimeout(() => setFeedback(null), 1250);
+  }, []);
+
+  const triggerBurst = useCallback((type: VfxBurst["type"], extra?: { lane?: number; lanes?: number[] }) => {
+    setVfxBurst({ id: ++idRef.current, type, ...extra });
   }, []);
 
   const setHold = useCallback((v: boolean) => {
@@ -138,9 +200,13 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
 
   const moveTo = useCallback((target: number) => {
     const n = Math.max(0, Math.min(2, target));
-    if (n === laneRef.current) return;
+    const old = laneRef.current;
+    if (n === old) return;
     laneRef.current = n;
     setLane(n);
+    const reaction = threatStartRef.current > 0 ? performance.now() - threatStartRef.current : undefined;
+    trackerRef.current!.recordMove(old, n, reaction, true);
+    setPrediction(trackerRef.current!.predict(n));
   }, []);
 
   const tapNow = useCallback(() => {
@@ -148,7 +214,16 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
     if (!resolver) return;
     tapResolver.current = null;
     const p = (performance.now() - tapStartRef.current) / tapDurRef.current;
-    resolver(p >= 0.46 && p <= 0.74);
+    const sh = tapShiftRef.current;
+    if (tapCounterRef.current) {
+      if (p >= 0.36 && p <= 0.68) resolver("perfect", p);
+      else if (p >= 0.24 && p <= 0.82) resolver("good", p);
+      else resolver("miss", p);
+    } else {
+      if (p >= 0.49 + sh && p <= 0.65 + sh) resolver("perfect", p);
+      else if (p >= 0.38 + sh && p <= 0.78 + sh) resolver("good", p);
+      else resolver("miss", p);
+    }
   }, []);
 
   // ---------- đồng hồ nội lực khi chịu đòn ----------
@@ -160,9 +235,9 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const bracing = holdRef.current && skillRef.current?.kind === "laugh" && skillRef.current.mode === "active";
-      const g = Math.max(0, Math.min(100, gaugeRef.current + (bracing ? 90 : -70) * dt));
+      const drainRate = bossHp <= 240 ? -92 : -72;
+      const g = Math.max(0, Math.min(100, gaugeRef.current + (bracing ? 96 : drainRate) * dt));
       gaugeRef.current = g;
-      // chỉ cập nhật React khi thanh nội lực thực sự thay đổi → tránh re-render mỗi frame
       if (Math.abs(g - painted) >= 1 || (g === 0 && painted !== 0) || (g === 100 && painted !== 100)) {
         painted = g;
         setGauge(g);
@@ -171,7 +246,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [bossHp]);
 
   // ---------- bàn phím ----------
   useEffect(() => {
@@ -180,9 +255,12 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
       if (e.code === "Space" || k === "enter") {
         e.preventDefault();
         const s = skillRef.current;
-        if (!s || s.mode !== "active" || deadRef.current) return;
-        if (s.kind === "fist") tapNow();
-        else if (s.kind === "laugh" && !holdRef.current) setHold(true);
+        if (!s || deadRef.current) return;
+        if ((s.kind === "fist" && s.mode === "active") || (s.kind === "judgment" && s.mode === "counter")) {
+          tapNow();
+        } else if (s.kind === "laugh" && s.mode === "active" && !holdRef.current) {
+          setHold(true);
+        }
         return;
       }
       if (k === "arrowleft" || k === "a") moveTo(laneRef.current - 1);
@@ -213,9 +291,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
     let bestCombo = 0;
     let counters = 0;
     let misses = 0;
+    let crits = 0;
+    let maxAdapt = 35;
     let lastKind: SkillKind | null = null;
-    let enrageShown = seqHp <= 200;
-    let finalShown = seqHp <= 100;
+    let enrageShown = seqHp <= 240;
+    let finalShown = seqHp <= 120;
 
     const alive = () => !cancelled && !deadRef.current && seqHp > 0;
     const wait = async (ms: number) => {
@@ -223,125 +303,241 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
       return alive();
     };
 
-    const resolveTap = (dur: number) =>
-      new Promise<boolean>((resolve) => {
+    const resolveTap = (dur: number, isCounter = false, shift = 0) =>
+      new Promise<{ res: "perfect" | "good" | "miss"; offset?: number }>((resolve) => {
         tapStartRef.current = performance.now();
         tapDurRef.current = dur;
+        tapCounterRef.current = isCounter;
+        tapShiftRef.current = shift;
         const timer = setTimeout(() => {
           if (tapResolver.current) {
             tapResolver.current = null;
-            resolve(false);
+            resolve({ res: "miss" });
           }
         }, dur);
-        tapResolver.current = (ok: boolean) => {
+        tapResolver.current = (res, offset) => {
           clearTimeout(timer);
-          resolve(ok);
+          resolve({ res, offset });
         };
       });
 
     (async () => {
       if (startHpRef.current >= BOSS_MAX_HP) {
-        await sleep(2450);
+        await sleep(2550);
         if (cancelled) return;
         setIntro(false);
-        if (!(await wait(500))) return;
+        if (!(await wait(550))) return;
       } else {
-        if (!(await wait(900))) return;
+        if (!(await wait(850))) return;
       }
 
+      const tracker = trackerRef.current!;
       while (alive()) {
-        const stage = seqHp > 200 ? 0 : seqHp > 100 ? 1 : 2;
-        const speed = stage === 0 ? 1 : stage === 1 ? 0.87 : 0.74;
-        const pool = (["gaze", "laugh", "fist"] as SkillKind[]).filter((k) => k !== lastKind);
-        const kind = pool[Math.floor(Math.random() * pool.length)];
+        const stage: 1 | 2 | 3 = seqHp > 240 ? 1 : seqHp > 120 ? 2 : 3;
+        const speed = tracker.getSpeedMultiplier(stage);
+        const kind = tracker.pickBossSkill(lastKind, stage);
         lastKind = kind;
+        tracker.setSkillContext(kind);
         const id = ++idRef.current;
-        const activeMs = Math.round((kind === "fist" ? 1420 : kind === "laugh" ? 1520 : 1380) * speed);
-        const teleMs = Math.round(860 * speed);
+
+        const teleMs = Math.round((kind === "judgment" ? 780 : 840) * speed);
+        const activeMs = Math.round(
+          (kind === "fist" ? 1360 : kind === "laugh" ? 1500 : kind === "judgment" ? 1150 : 1280) * speed
+        );
         setDurs({ tele: teleMs, active: activeMs });
 
-        const dLanes = kind === "gaze" ? pickDangerLanes() : [];
+        let dLanes: number[] = [];
+        let snap = tracker.predict(laneRef.current);
+        let aiLocked = false;
+        const fistShift = kind === "fist" ? tracker.getFistTimingShift() : 0;
+
+        if (kind === "gaze" || kind === "judgment") {
+          const picked = tracker.pickTargetedLanes(laneRef.current, 2, stage === 1 ? 0.72 : 0.88);
+          dLanes = picked.lanes;
+          snap = picked.predicted;
+          aiLocked = picked.aiUsed;
+          setPrediction(snap);
+          maxAdapt = Math.max(maxAdapt, snap.adaptRate);
+          threatStartRef.current = performance.now();
+        } else {
+          tracker.recordStay(laneRef.current, true);
+          setPrediction(tracker.predict(laneRef.current));
+        }
+
+        // Đồng bộ phân tích chiến thuật với Gemini (chạy nền, không làm khựng trận)
+        tracker.maybeSyncGemini(laneRef.current, stage, kind, (nextSnap) => {
+          if (!cancelled) setPrediction(nextSnap);
+        });
+
         setDanger(dLanes);
-        setSkill({ kind, id, mode: "telegraph" });
+        setSkill({ kind, id, mode: "telegraph", aiLocked });
         await bossControls.start({
           y: [0, -14, 0],
           scale: [1, 1.035, 1],
-          transition: { duration: 0.55, ease: "easeOut" },
+          transition: { duration: 0.48, ease: "easeOut" },
         });
-        if (!(await wait(teleMs))) return;
 
-        setSkill({ kind, id, mode: "active" });
-        if (kind === "gaze") {
-          shake(5);
+        // Giai đoạn 3: Boss đọc vị hướng né sớm và đổi hướng mắt 1 lần (còn 680ms công bằng để phản ứng)
+        if (kind === "gaze" && stage === 3 && snap.warmedUp && Math.random() < 0.45) {
+          if (!(await wait(Math.round(teleMs * 0.58)))) return;
+          if (!dLanes.includes(laneRef.current)) {
+            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92);
+            dLanes = retarget.lanes;
+            setDanger(dLanes);
+            setPrediction(retarget.predicted);
+            threatStartRef.current = performance.now();
+            showFb("ĐỌC VỊ!", "BOSS ĐỔI HƯỚNG TRỪNG PHẠT", "warn");
+            shake(7);
+            if (!(await wait(Math.round(680 * speed)))) return;
+          } else {
+            if (!(await wait(Math.round(teleMs * 0.42)))) return;
+          }
+        } else {
+          if (!(await wait(teleMs))) return;
         }
-        if (kind === "laugh") {
-          setLaughKey((k) => k + 1);
-          shake(13);
-        }
+
+        setSkill({ kind, id, mode: "active", aiLocked });
+        if (kind === "gaze") shake(6);
+        if (kind === "laugh") shake(12);
         if (kind === "fist") {
-          setTapWindow({ id, dur: activeMs });
-          shake(5);
+          setTapWindow({ id, dur: activeMs, shift: fistShift });
+          shake(6);
         }
+        if (kind === "judgment") shake(8);
 
-        let ok = false;
+        let hitOutcome: "crit" | "good" | "miss" = "miss";
+        let dmgDealt = 0;
+        let subLabel: string | undefined;
+
         if (kind === "gaze") {
           await sleep(activeMs);
           if (cancelled) return;
-          setStrikeKey((k) => k + 1);
-          shake(laneRef.current !== undefined && !dLanes.includes(laneRef.current) ? 7 : 16);
-          ok = !dLanes.includes(laneRef.current);
-          await sleep(240);
+          triggerBurst("gazeImpact", { lanes: dLanes });
+          const survived = !dLanes.includes(laneRef.current);
+          shake(survived ? 8 : 18);
+          if (survived) {
+            const brokeRead = laneRef.current !== snap.predictedLane && aiLocked;
+            hitOutcome = brokeRead ? "crit" : "good";
+            dmgDealt = brokeRead ? 50 : 40;
+            subLabel = brokeRead ? `PHÁ ĐỌC VỊ! · -${dmgDealt} HP` : `-${dmgDealt} HP`;
+          }
+          tracker.recordSkill("gaze", survived, undefined, true);
+          await sleep(220);
         } else if (kind === "laugh") {
           await sleep(activeMs);
           if (cancelled) return;
-          ok = holdRef.current && gaugeRef.current >= 40;
-          shake(ok ? 9 : 15);
-          setStrikeKey((k) => k + 1);
-        } else {
-          ok = await resolveTap(activeMs);
+          const ok = holdRef.current && gaugeRef.current >= 50;
+          if (ok) {
+            const fullShield = gaugeRef.current >= 85;
+            hitOutcome = fullShield ? "crit" : "good";
+            dmgDealt = fullShield ? 58 : 45;
+            subLabel = fullShield ? `NỘI LỰC TUYỆT ĐỐI! · -${dmgDealt} HP` : `-${dmgDealt} HP`;
+          }
+          tracker.recordSkill("laugh", ok, undefined, true);
+          shake(ok ? 9 : 16);
+        } else if (kind === "fist") {
+          const { res: tapRes, offset } = await resolveTap(activeMs, false, fistShift);
           if (cancelled) return;
-          shake(ok ? 14 : 12);
+          hitOutcome = tapRes === "perfect" ? "crit" : tapRes;
+          if (tapRes === "perfect") {
+            dmgDealt = 65;
+            subLabel = `CHÍ MẠNG! · -${dmgDealt} HP`;
+          } else if (tapRes === "good") {
+            dmgDealt = 45;
+            subLabel = `-${dmgDealt} HP`;
+          }
+          tracker.recordSkill("fist", tapRes !== "miss", offset, true);
+          shake(tapRes === "perfect" ? 18 : tapRes === "good" ? 12 : 15);
+        } else {
+          // judgment: né làn đọc vị -> phản công chớp nhoáng
+          await sleep(activeMs);
+          if (cancelled) return;
+          triggerBurst("gazeImpact", { lanes: dLanes });
+          const dodged = !dLanes.includes(laneRef.current);
+          if (!dodged) {
+            hitOutcome = "miss";
+            tracker.recordSkill("judgment", false, undefined, true);
+          } else {
+            const counterDur = Math.round(920 * speed);
+            setDurs((d) => ({ ...d, active: counterDur }));
+            setDanger([]);
+            setSkill({ kind: "judgment", id, mode: "counter", aiLocked });
+            setTapWindow({ id: id + 1, dur: counterDur, isCounter: true });
+            const { res: tapRes } = await resolveTap(counterDur, true, 0);
+            if (cancelled) return;
+            hitOutcome = tapRes === "perfect" ? "crit" : tapRes;
+            if (tapRes === "perfect") {
+              dmgDealt = 65;
+              subLabel = `PHÁ PHÁN XÉT! · -${dmgDealt} HP`;
+            } else if (tapRes === "good") {
+              dmgDealt = 50;
+              subLabel = `-${dmgDealt} HP`;
+            }
+            tracker.recordSkill("judgment", tapRes !== "miss", undefined, true);
+            shake(tapRes !== "miss" ? 16 : 14);
+          }
         }
+        setPrediction(tracker.predict(laneRef.current));
 
+        threatStartRef.current = 0;
         setSkill(null);
         setTapWindow(null);
         setDanger([]);
         setHold(false);
         if (!alive()) return;
 
-        if (ok) {
-          seqHp = Math.max(0, seqHp - HIT_DMG);
+        if (hitOutcome !== "miss") {
+          seqHp = Math.max(0, seqHp - dmgDealt);
           counters += 1;
+          if (hitOutcome === "crit") crits += 1;
           comboTrack += 1;
           bestCombo = Math.max(bestCombo, comboTrack);
           setBossHp(seqHp);
           onProgress(seqHp);
           setCombo(comboTrack);
-          setSlashKey((k) => k + 1);
+
+          triggerBurst(hitOutcome === "crit" ? "crit" : "slash");
           setFlashKey((k) => k + 1);
           setHitKey((k) => k + 1);
-          showFb("PHẢN CÔNG!", comboTrack >= 2 ? `${comboTrack} COMBO · -${HIT_DMG} HP` : `-${HIT_DMG} HP`, "perfect");
+
+          await bossControls.start({
+            x: [0, -10, 8, -4, 0],
+            filter: ["brightness(2.2)", "brightness(1)"],
+            transition: { duration: 0.28 },
+          });
+
+          showFb(
+            hitOutcome === "crit" ? "CHÍ MẠNG!" : "PHẢN CÔNG!",
+            comboTrack >= 2 ? `${comboTrack} COMBO · ${subLabel}` : subLabel,
+            hitOutcome === "crit" ? "crit" : "perfect"
+          );
 
           if (seqHp <= 0) {
             setDying(true);
-            await sleep(1100);
+            triggerBurst("phase");
+            await sleep(1200);
             if (cancelled) return;
             setDying(false);
             setWin(true);
             setFlashKey((k) => k + 1);
             await sleep(2500);
-            if (!cancelled) onVictory({ counters, bestCombo, misses, hpLeft: hpRef.current });
+            if (!cancelled) onVictory({ counters, bestCombo, misses, hpLeft: hpRef.current, crits, maxAdapt });
             return;
           }
 
-          if (seqHp % BAR_HP === 0) {
+          // Phá vỡ một thanh máu (240 hoặc 120)
+          const crossedBar =
+            (seqHp <= 240 && !enrageShown) || (seqHp <= 120 && !finalShown);
+          if (crossedBar) {
             onHeal(1);
-            showFb("PHÁ KHIÊN!", "+1 HP · Boss choáng", "good");
-            shake(18);
+            showFb("PHÁ KHIÊN!", "+1 HP · BOSS CHOÁNG", "good");
+            triggerBurst("phase");
+            shake(20);
             setRedKey((k) => k + 1);
-            await sleep(1150);
+            await sleep(1100);
             if (!alive()) return;
-            if (seqHp === 200 && !enrageShown) {
+
+            if (seqHp <= 240 && !enrageShown) {
               enrageShown = true;
               setEnraged(true);
               setPhaseCut(true);
@@ -349,8 +545,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               shake(22);
               await sleep(1900);
               setPhaseCut(false);
-            }
-            if (seqHp === 100 && !finalShown) {
+            } else if (seqHp <= 120 && !finalShown) {
               finalShown = true;
               setFinalCut(true);
               setRedKey((k) => k + 1);
@@ -365,56 +560,45 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           setCombo(0);
           if (deadRef.current) return;
           const applied = onDamage();
+          triggerBurst("playerHit", { lane: laneRef.current });
           setHitKey((k) => k + 1);
-          shake(20);
+          shake(22);
           showFb(applied ? "TRÚNG ĐÒN!" : "SUÝT TRÚNG!", applied ? "-1 HP" : "MIỄN THƯƠNG", "bad");
         }
 
         if (!alive()) return;
-        await sleep(820);
+        await sleep(740);
       }
     })();
 
     return () => {
       cancelled = true;
-      tapResolver.current?.(false);
+      tapResolver.current?.("miss");
       tapResolver.current = null;
     };
-  }, [bossControls, onDamage, onHeal, onProgress, onVictory, sceneShake, setHold, shake, showFb]);
+  }, [bossControls, onDamage, onHeal, onProgress, onVictory, sceneShake, setHold, shake, showFb, triggerBurst]);
 
-  const stage = bossHp > 200 ? 1 : bossHp > 100 ? 2 : 3;
+  const stage = bossHp > 240 ? 1 : bossHp > 120 ? 2 : 3;
   const form = enraged ? BOSS_FORMS.rage : BOSS_FORMS.calm;
-  const activeSkill = skill?.mode === "active" ? skill.kind : null;
+  const activeSkill = skill && skill.mode !== "telegraph" ? skill : null;
   const info = skill ? SKILL_INFO[skill.kind] : null;
-
-  const ghostAura = useMemo(
-    () =>
-      Array.from({ length: 14 }, (_, i) => ({
-        left: 8 + Math.random() * 84,
-        delay: Math.random() * 3.5,
-        dur: 6 + Math.random() * 5,
-        size: 2 + Math.random() * 4,
-        red: i % 3 !== 0,
-      })),
-    []
-  );
 
   const onStagePointer = (e: React.PointerEvent<HTMLDivElement>) => {
     if (deadRef.current) return;
     const s = skillRef.current;
-    if (!s || s.mode !== "active") return;
-    if (s.kind === "gaze") {
+    if (!s) return;
+    if ((s.kind === "fist" && s.mode === "active") || (s.kind === "judgment" && s.mode === "counter")) {
+      tapNow();
+    } else if (s.kind === "gaze" || (s.kind === "judgment" && s.mode !== "counter")) {
       const rect = e.currentTarget.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       moveTo(x < 1 / 3 ? 0 : x < 2 / 3 ? 1 : 2);
-    } else if (s.kind === "fist") {
-      tapNow();
     }
   };
 
   return (
     <motion.div
-      className="absolute inset-0 overflow-hidden bg-[#050307] select-none"
+      className="absolute inset-0 overflow-hidden bg-[#040208] select-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.9 }}
@@ -434,18 +618,18 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             className="h-full w-full object-cover"
             style={{
               filter: enraged
-                ? "saturate(1.45) hue-rotate(-10deg) brightness(0.82) contrast(1.1)"
-                : "saturate(0.85) brightness(0.62) contrast(1.05)",
+                ? "saturate(1.45) hue-rotate(-14deg) brightness(0.75) contrast(1.12)"
+                : "saturate(0.85) brightness(0.55) contrast(1.08)",
               transition: "filter 2.4s ease",
             }}
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-[#05030a]/80 via-transparent to-[#05030a]/95" />
+          <div className="absolute inset-0 bg-gradient-to-b from-[#04020a]/85 via-transparent to-[#04020a]/95" />
           <div
             className="absolute inset-0 transition-opacity duration-[2000ms]"
             style={{
               opacity: enraged ? 1 : 0.45,
               background:
-                "radial-gradient(ellipse at 50% 62%, rgba(255,48,24,.24), transparent 58%), radial-gradient(ellipse at 50% 10%, rgba(90,20,120,.35), transparent 65%)",
+                "radial-gradient(ellipse at 50% 60%, rgba(255,44,24,.28), transparent 58%), radial-gradient(ellipse at 50% 10%, rgba(95,20,140,.35), transparent 65%)",
             }}
           />
         </motion.div>
@@ -456,31 +640,17 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             className="rune-spin absolute left-1/2 top-[18%] h-[74vh] w-[74vh] -translate-x-1/2 rounded-full border border-red-500/25"
             style={{ boxShadow: "0 0 70px rgba(255,40,20,.18) inset, 0 0 50px rgba(255,40,20,.12)" }}
           />
-          <div className="rune-spin-rev absolute left-1/2 top-[24%] h-[58vh] w-[58vh] -translate-x-1/2 rounded-full border border-dashed border-sky-400/20" />
+          <div className="rune-spin-rev absolute left-1/2 top-[24%] h-[58vh] w-[58vh] -translate-x-1/2 rounded-full border border-dashed border-sky-400/25" />
           <div
-            className="absolute left-1/2 top-[32%] h-[44vh] w-[44vh] -translate-x-1/2 rounded-full border border-violet-400/20"
-            style={{ background: "radial-gradient(circle, rgba(120,40,255,.14), transparent 68%)" }}
+            className="absolute left-1/2 top-[32%] h-[44vh] w-[44vh] -translate-x-1/2 rounded-full border border-violet-400/25"
+            style={{ background: "radial-gradient(circle, rgba(120,40,255,.15), transparent 68%)" }}
           />
         </div>
 
-        {/* tàn lửa */}
-        <div className="pointer-events-none absolute inset-0 z-[4] opacity-80">
-          <RainCanvas rain={false} intensity={1.4} />
+        {/* tàn lửa nhẹ */}
+        <div className="pointer-events-none absolute inset-0 z-[4] opacity-75">
+          <RainCanvas rain={false} intensity={1.2} />
         </div>
-        {ghostAura.map((g, i) => (
-          <span
-            key={i}
-            className="pointer-events-none absolute bottom-0 z-[4] rounded-full"
-            style={{
-              left: `${g.left}%`,
-              width: g.size,
-              height: g.size,
-              background: g.red ? "#ff5a3a" : "#7cc4ff",
-              boxShadow: `0 0 ${g.size * 5}px ${g.size}px ${g.red ? "rgba(255,70,40,.7)" : "rgba(90,160,255,.6)"}`,
-              animation: `floatUp ${g.dur}s linear ${g.delay}s infinite`,
-            }}
-          />
-        ))}
 
         {/* ====== Boss ====== */}
         <motion.div
@@ -497,11 +667,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           <motion.div className="relative h-full w-full" animate={bossControls}>
             {/* hào quang sau lưng */}
             <div
-              className="boss-aura absolute left-1/2 top-[30%] h-[62%] w-[132%] -translate-x-1/2 rounded-[50%] blur-2xl"
+              className="boss-aura absolute left-1/2 top-[26%] h-[68%] w-[136%] -translate-x-1/2 rounded-[50%] blur-2xl"
               style={{
                 background: enraged
-                  ? "radial-gradient(ellipse, rgba(255,40,20,.5), rgba(120,0,20,.22) 55%, transparent 72%)"
-                  : "radial-gradient(ellipse, rgba(70,140,255,.34), rgba(70,40,160,.16) 55%, transparent 72%)",
+                  ? "radial-gradient(ellipse, rgba(255,42,20,.55), rgba(130,0,25,.25) 55%, transparent 74%)"
+                  : "radial-gradient(ellipse, rgba(70,155,255,.38), rgba(75,40,170,.2) 55%, transparent 74%)",
               }}
             />
             <img
@@ -512,10 +682,14 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               style={{
                 mixBlendMode: "screen",
                 filter: enraged
-                  ? "drop-shadow(0 0 55px rgba(255,60,30,.55)) contrast(1.06)"
-                  : "drop-shadow(0 0 55px rgba(120,180,255,.45))",
-                WebkitMaskImage: "radial-gradient(ellipse 62% 58% at 50% 42%, #000 62%, transparent 86%)",
-                maskImage: "radial-gradient(ellipse 62% 58% at 50% 42%, #000 62%, transparent 86%)",
+                  ? "drop-shadow(0 0 55px rgba(255,55,25,.6)) contrast(1.08)"
+                  : "drop-shadow(0 0 50px rgba(95,180,255,.5)) contrast(1.06)",
+                WebkitMaskImage:
+                  "linear-gradient(to right, transparent 0%, #000 12%, #000 88%, transparent 100%), linear-gradient(to bottom, transparent 0%, #000 10%, #000 72%, transparent 94%)",
+                WebkitMaskComposite: "source-in",
+                maskImage:
+                  "linear-gradient(to right, transparent 0%, #000 12%, #000 88%, transparent 100%), linear-gradient(to bottom, transparent 0%, #000 10%, #000 72%, transparent 94%)",
+                maskComposite: "intersect",
                 transition: "filter 2s ease",
               }}
             />
@@ -527,16 +701,21 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 style={{
                   left: `${ex}%`,
                   top: `${ey}%`,
-                  width: activeSkill === "gaze" ? "17%" : "9%",
-                  height: activeSkill === "gaze" ? "3.4%" : "2.4%",
+                  width: skill?.kind === "gaze" || skill?.kind === "judgment" ? "15%" : "8%",
+                  height: skill?.kind === "gaze" || skill?.kind === "judgment" ? "3.2%" : "2.1%",
                   transform: "translate(-50%,-50%)",
                   background:
-                    activeSkill === "gaze"
-                      ? "radial-gradient(ellipse, #fff 0%, rgba(255,80,40,1) 28%, rgba(255,0,0,.55) 55%, transparent 78%)"
-                      : "radial-gradient(ellipse, rgba(255,90,60,1), rgba(255,20,20,.7) 40%, transparent 76%)",
-                  boxShadow: activeSkill === "gaze" ? "0 0 60px 18px rgba(255,50,20,.85)" : "0 0 26px 6px rgba(255,40,20,.6)",
+                    skill?.kind === "judgment"
+                      ? "radial-gradient(ellipse, #fff 0%, #d946ef 35%, rgba(180,30,255,.5) 60%, transparent 80%)"
+                      : skill?.kind === "gaze"
+                      ? "radial-gradient(ellipse, #fff 0%, rgba(255,80,40,1) 30%, rgba(255,0,0,.55) 55%, transparent 78%)"
+                      : "radial-gradient(ellipse, rgba(255,95,60,1), rgba(255,20,20,.65) 42%, transparent 76%)",
+                  boxShadow:
+                    skill?.kind === "gaze" || skill?.kind === "judgment"
+                      ? "0 0 55px 16px rgba(255,50,20,.9)"
+                      : "0 0 24px 6px rgba(255,40,20,.55)",
                   filter: "blur(1px)",
-                  transition: "all .3s",
+                  transition: "all .28s",
                 }}
               />
             ))}
@@ -546,111 +725,83 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               style={{
                 left: `${form.mouth[0]}%`,
                 top: `${form.mouth[1]}%`,
-                width: enraged ? "24%" : "20%",
-                height: "3.6%",
+                width: enraged ? "22%" : "18%",
+                height: "3.4%",
                 transform: "translate(-50%,-50%)",
                 background: enraged
                   ? "radial-gradient(ellipse, rgba(255,150,60,.85), rgba(255,50,20,.35) 55%, transparent 78%)"
                   : "radial-gradient(ellipse, rgba(160,210,255,.55), rgba(80,140,255,.22) 55%, transparent 78%)",
                 filter: "blur(4px)",
-                opacity: activeSkill === "laugh" ? 1 : 0.55,
-                transition: "all .4s",
+                opacity: skill?.kind === "laugh" ? 1 : 0.45,
+                transition: "all .35s",
               }}
             />
           </motion.div>
         </motion.div>
 
-        {/* sóng xung kích khi cười */}
-        <AnimatePresence>
-          {activeSkill === "laugh" && (
-            <div key={`laugh-${laughKey}`} className="pointer-events-none absolute inset-0 z-[14]">
-              <div className="shockwave absolute left-1/2 top-[46%] h-[46vh] w-[46vh]" />
-              <div
-                className="shockwave absolute left-1/2 top-[46%] h-[46vh] w-[46vh]"
-                style={{ animationDelay: "0.45s" }}
-              />
-              <div
-                className="shockwave absolute left-1/2 top-[46%] h-[46vh] w-[46vh]"
-                style={{ animationDelay: "0.9s" }}
-              />
-            </div>
-          )}
-        </AnimatePresence>
-
-        {/* ====== Làn né / cột trừng phạt ====== */}
-        {(skill?.kind === "gaze" || strikeKey > 0) &&
+        {/* ====== Làn chỉ dẫn sạch đẹp dưới sàn ====== */}
+        {(skill?.kind === "gaze" || (skill?.kind === "judgment" && skill.mode !== "counter")) &&
           [0, 1, 2].map((i) => {
             const isDanger = danger.includes(i);
-            if (!isDanger && skill?.kind !== "gaze") return null;
+            const isPred = prediction.predictedLane === i && prediction.confidence >= 0.48;
             return (
               <div
-                key={`lane-${i}`}
-                className="pointer-events-none absolute z-[13]"
-                style={{ left: `${LANE_X[i]}%`, top: "52%", bottom: 0, width: "32%", transform: "translateX(-50%)" }}
+                key={`floor-${i}`}
+                className="pointer-events-none absolute bottom-0 z-[13] h-[24%] w-[28%] -translate-x-1/2"
+                style={{ left: `${LANE_X[i]}%` }}
               >
-                {isDanger ? (
-                  <>
-                    <div
-                      className="absolute inset-0"
-                      style={{
-                        clipPath: "polygon(40% 0, 60% 0, 100% 100%, 0 100%)",
-                        background:
-                          skill?.mode === "active"
-                            ? "linear-gradient(to bottom, rgba(255,255,255,.9), rgba(255,110,40,.75) 35%, rgba(255,20,20,.42))"
-                            : "linear-gradient(to bottom, rgba(255,40,30,.12), rgba(255,40,30,.5))",
-                        filter: skill?.mode === "active" ? "blur(1px)" : "none",
-                        transition: "background .18s",
-                      }}
-                    />
-                    <div
-                      className="absolute inset-0"
-                      style={{
-                        clipPath: "polygon(40% 0, 60% 0, 100% 100%, 0 100%)",
-                        background:
-                          "repeating-linear-gradient(to bottom, rgba(255,90,60,.28) 0 12px, transparent 12px 26px)",
-                        boxShadow: "inset 0 0 60px rgba(255,0,0,.75)",
-                      }}
-                    />
-                    {skill?.mode === "active" && (
-                      <div
-                        key={`beam-${skill.id}-${i}`}
-                        className="absolute inset-x-0 top-0 h-full"
-                        style={{
-                          background:
-                            "linear-gradient(to bottom, rgba(255,255,255,.95), rgba(255,130,60,.72) 32%, rgba(255,20,20,.28))",
-                          clipPath: "polygon(40% 0, 60% 0, 100% 100%, 0 100%)",
-                          mixBlendMode: "screen",
-                          animation: "eyeFlicker .28s linear infinite",
-                        }}
-                      />
-                    )}
-                  </>
-                ) : (
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      clipPath: "polygon(40% 0, 60% 0, 100% 100%, 0 100%)",
-                      background: "linear-gradient(to bottom, rgba(90,200,255,.05), rgba(90,200,255,.18))",
-                      boxShadow: "inset 0 0 40px rgba(80,180,255,.25)",
-                    }}
-                  >
-                    <div className="absolute bottom-[8%] left-1/2 -translate-x-1/2 font-sys text-[10px] tracking-[0.3em] text-sky-200/90">
-                      AN TOÀN
-                    </div>
+                <div
+                  className="absolute inset-x-2 bottom-3 h-20 rounded-xl border transition-all duration-200"
+                  style={{
+                    borderColor: isDanger
+                      ? skill.kind === "judgment"
+                        ? "rgba(216,70,239,0.75)"
+                        : "rgba(255,70,45,0.75)"
+                      : "rgba(79,168,255,0.65)",
+                    background: isDanger
+                      ? skill.kind === "judgment"
+                        ? "radial-gradient(ellipse at 50% 60%, rgba(192,38,211,0.32), transparent 72%)"
+                        : "radial-gradient(ellipse at 50% 60%, rgba(255,45,25,0.34), transparent 72%)"
+                      : "radial-gradient(ellipse at 50% 60%, rgba(79,168,255,0.22), transparent 72%)",
+                    boxShadow: isDanger
+                      ? "0 0 28px rgba(255,40,20,0.45), inset 0 0 24px rgba(255,40,20,0.25)"
+                      : "0 0 24px rgba(79,168,255,0.35), inset 0 0 20px rgba(79,168,255,0.18)",
+                  }}
+                >
+                  <div className="flex h-full flex-col items-center justify-center">
+                    <span
+                      className={`font-sys text-[9px] font-bold tracking-[0.26em] sm:text-[10px] ${
+                        isDanger ? "text-red-200" : "text-sky-200"
+                      }`}
+                    >
+                      {isDanger ? (isPred ? "BẮT BÀI!" : "NGUY HIỂM") : "AN TOÀN"}
+                    </span>
                   </div>
-                )}
+                </div>
               </div>
             );
           })}
 
+        {/* ====== Canvas VFX 60fps ====== */}
+        <BossVfxCanvas
+          skill={skill}
+          danger={danger}
+          lane={lane}
+          holding={holding}
+          enraged={enraged}
+          burst={vfxBurst}
+          eyeCoords={form.eyes}
+          mouthCoord={form.mouth}
+        />
+
         {/* ====== Người chơi ====== */}
         <motion.div
           className="absolute z-20"
-          style={{ height: "min(32svh, 50vw)", aspectRatio: "2/3", x: "-50%", bottom: "2%" }}
+          style={{ height: "min(30svh, 46vw)", aspectRatio: "2/3", x: "-50%", bottom: "3%" }}
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0, left: `${LANE_X[lane]}%` }}
           transition={{
-            left: { type: "spring", stiffness: 500, damping: 32 },
+            left: { type: "spring", stiffness: 520, damping: 32 },
             opacity: { duration: 0.8 },
             y: { duration: 0.8 },
           }}
@@ -659,8 +810,8 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             className="absolute -inset-x-1/3 bottom-0 h-1/2 rounded-[50%] blur-xl"
             style={{
               background: holding
-                ? "radial-gradient(ellipse, rgba(255,180,80,.45), transparent 70%)"
-                : "radial-gradient(ellipse, rgba(110,90,255,.45), transparent 70%)",
+                ? "radial-gradient(ellipse, rgba(255,190,90,.55), transparent 70%)"
+                : "radial-gradient(ellipse, rgba(110,95,255,.5), transparent 70%)",
             }}
           />
           <motion.img
@@ -671,63 +822,30 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             animate={{
               y: holding ? "1.5%" : 0,
               filter: holding
-                ? "drop-shadow(0 0 20px rgba(255,190,90,.85))"
-                : "drop-shadow(0 0 18px rgba(110,150,255,.85))",
+                ? "drop-shadow(0 0 22px rgba(255,190,90,.9))"
+                : "drop-shadow(0 0 18px rgba(110,160,255,.85))",
             }}
             transition={{ duration: 0.25 }}
           />
-          {slashKey > 0 && (
-            <div key={`slash-${slashKey}`} className="pointer-events-none absolute inset-0 z-30">
-              <div
-                className="slash-rail absolute left-1/2 top-1/2 h-[6px] w-[420%] rounded-full"
-                style={{
-                  background: "linear-gradient(90deg, transparent, #fff, #7cc4ff, transparent)",
-                  boxShadow: "0 0 40px 8px rgba(120,190,255,.9)",
-                }}
-              />
-              <div
-                className="slash-sweep absolute left-1/2 top-1/2 h-[180%] w-[520%] rounded-full"
-                style={{
-                  background: "conic-gradient(from 200deg, transparent 0deg, rgba(255,255,255,.95) 18deg, transparent 40deg)",
-                  filter: "blur(2px)",
-                  opacity: 0.9,
-                }}
-              />
-            </div>
-          )}
         </motion.div>
 
-        {/* vệt chém vào boss */}
-        {slashKey > 0 && (
-          <div key={`bossSlash-${slashKey}`} className="pointer-events-none absolute inset-0 z-[16]">
-            <div
-              className="slash-sweep absolute left-1/2 top-[40%] h-[26vh] w-[120vw]"
-              style={{
-                background:
-                  "linear-gradient(0deg, transparent 38%, rgba(255,255,255,.95) 50%, transparent 62%)",
-                filter: "blur(1px)",
-              }}
-            />
-          </div>
-        )}
-
         {/* ====== HUD ====== */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-2 px-3 pt-3 sm:px-6 sm:pt-5">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-2 px-3 pt-3 sm:px-6 sm:pt-4">
           {/* người chơi */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <div
-              className="h-10 w-10 rounded-full border border-sky-400/80 shadow-[0_0_16px_rgba(79,168,255,.8)] sm:h-12 sm:w-12"
+              className="h-9 w-9 rounded-full border border-sky-400/80 shadow-[0_0_16px_rgba(79,168,255,.8)] sm:h-12 sm:w-12"
               style={{ backgroundImage: `url(${avatar})`, backgroundSize: "260%", backgroundPosition: "58% 20%" }}
             />
             <div>
-              <div className="font-sys text-[9px] font-bold tracking-[0.2em] text-sky-200 text-glow sm:text-[10px]">
+              <div className="font-sys text-[8px] font-bold tracking-[0.16em] text-sky-200 text-glow sm:text-[10px] sm:tracking-[0.2em]">
                 SUNG JIN WOO
               </div>
               <div className="mt-1 flex gap-1">
                 {Array.from({ length: maxHp }).map((_, i) => (
                   <div
                     key={i}
-                    className="h-1.5 w-6 skew-x-[-20deg] transition-all duration-300 sm:w-8"
+                    className="h-1.5 w-5 skew-x-[-20deg] transition-all duration-300 sm:w-8"
                     style={{
                       background: i < hp ? "linear-gradient(90deg,#4fa8ff,#a855ff)" : "rgba(255,255,255,.12)",
                       boxShadow: i < hp ? "0 0 10px #4fa8ff" : "none",
@@ -740,11 +858,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
 
           {/* boss */}
           <div className="min-w-0 flex-1 px-1 text-center sm:max-w-md">
-            <div className="font-sys text-[8px] tracking-[0.32em] text-red-300/90 sm:text-[10px]">
+            <div className="font-sys text-[8px] tracking-[0.26em] text-red-300/90 sm:text-[10px]">
               BOSS · CẤP SSS
             </div>
             <div
-              className="mt-0.5 font-sys text-[9px] font-black leading-[1.2] tracking-[0.08em] text-white sm:text-base sm:tracking-[0.18em]"
+              className="mt-0.5 font-sys text-[10px] font-black leading-tight tracking-[0.06em] text-white sm:text-base sm:tracking-[0.16em]"
               style={{ textShadow: "0 0 16px #ff2a10, 0 0 40px rgba(255,0,0,.7)" }}
             >
               TƯỢNG THẦN MỈM CƯỜI
@@ -756,7 +874,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 return (
                   <div
                     key={`${i}-${hitKey}`}
-                    className={`relative h-2 overflow-hidden border border-red-500/40 bg-red-950/60 sm:h-2.5 ${hitKey ? "boss-bar-hit" : ""}`}
+                    className={`relative h-2 overflow-hidden border border-red-500/40 bg-red-950/65 sm:h-2.5 ${hitKey ? "boss-bar-hit" : ""}`}
                     style={{ clipPath: "polygon(0 0, 100% 0, calc(100% - 6px) 100%, 6px 100%)" }}
                   >
                     <motion.div
@@ -783,23 +901,69 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 );
               })}
             </div>
-            <div
-              className="mt-1.5 flex items-center justify-center gap-3 font-sys text-[9px] tracking-[0.22em] text-red-100/90 sm:text-[10px]"
-              style={{ textShadow: "0 0 10px rgba(255,50,20,.8)" }}
-            >
+            <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 font-sys text-[8px] tracking-[0.18em] text-red-100/90 sm:text-[10px]">
               <span>PHA {stage} / 3</span>
               <span className="text-red-400">◆</span>
               <span>{Math.max(0, bossHp)} / {BOSS_MAX_HP}</span>
             </div>
+            {/* Chỉ báo ML + Gemini đọc vị trực tuyến */}
+            <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200 backdrop-blur-sm sm:text-[8px]">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  prediction.warmedUp && prediction.adaptRate >= 60 ? "animate-ping bg-red-400" : "bg-violet-400"
+                }`}
+              />
+              <span>
+                {prediction.warmedUp
+                  ? `ML ĐỌC VỊ ${prediction.adaptRate}% · MẪU ${prediction.samples}`
+                  : `ML THU THẬP ${prediction.samples}/3`}
+              </span>
+              {prediction.accuracy > 0 && (
+                <span className="text-emerald-300/90">· ĐÚNG {prediction.accuracy}%</span>
+              )}
+              <span className="hidden text-violet-300/65 sm:inline">· {prediction.reason}</span>
+              {prediction.warmedUp && (
+                <span className="text-amber-300">
+                  [{LANE_NAMES[prediction.predictedLane]} {Math.round(prediction.probs[prediction.predictedLane] * 100)}%]
+                </span>
+              )}
+              {prediction.geminiStatus !== "off" && (
+                <span
+                  title={prediction.geminiStatus === "error" ? prediction.geminiError : undefined}
+                  className={`rounded-sm px-1 py-px text-[6.5px] sm:text-[7px] ${
+                    prediction.geminiStatus === "active"
+                      ? "border border-cyan-400/50 bg-cyan-950/60 text-cyan-200"
+                      : prediction.geminiStatus === "syncing"
+                      ? "animate-pulse border border-sky-400/40 bg-sky-950/60 text-sky-200"
+                      : prediction.geminiStatus === "error"
+                      ? "border border-red-400/40 bg-red-950/60 text-red-300"
+                      : "border border-sky-500/30 bg-sky-950/40 text-sky-300/80"
+                  }`}
+                >
+                  {prediction.geminiStatus === "active"
+                    ? "+ GEMINI"
+                    : prediction.geminiStatus === "syncing"
+                    ? "GEMINI…"
+                    : prediction.geminiStatus === "error"
+                    ? "GEMINI LỖI (XEM KEY)"
+                    : "GEMINI SẴN SÀNG"}
+                </span>
+              )}
+            </div>
+            {prediction.geminiTaunt && (
+              <div className="mt-0.5 hidden truncate font-sys text-[8px] tracking-[0.12em] text-cyan-200/85 sm:block">
+                “{prediction.geminiTaunt}”
+              </div>
+            )}
           </div>
 
           {/* combo */}
-          <div className="min-w-[58px] text-right sm:min-w-[90px]">
+          <div className="min-w-[52px] shrink-0 text-right sm:min-w-[90px]">
             <div className="font-sys text-[8px] tracking-[0.25em] text-violet-300/80">COMBO</div>
             <div key={combo} className={`font-sys text-xl font-black text-white sm:text-3xl ${combo >= 2 ? "combo-pop" : ""}`}>
               <span style={{ textShadow: "0 0 18px #a855ff" }}>×{combo}</span>
             </div>
-            <div className="mt-1 font-sys text-[8px] tracking-[0.2em] text-sky-300/60">HỒNG NGỤC</div>
+            <div className="mt-0.5 font-sys text-[8px] tracking-[0.2em] text-sky-300/60">HỒNG NGỤC</div>
           </div>
         </div>
 
@@ -807,35 +971,51 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         <AnimatePresence>
           {skill && info && (
             <motion.div
-              key={`card-${skill.id}`}
-              className="pointer-events-none absolute left-1/2 top-[23%] z-40 w-[90%] max-w-sm -translate-x-1/2 px-2 sm:left-6 sm:top-[26%] sm:w-[21rem] sm:max-w-none sm:translate-x-0"
-              initial={{ opacity: 0, y: 16, filter: "blur(8px)" }}
+              key={`card-${skill.id}-${skill.mode === "counter" ? "c" : "a"}`}
+              className="pointer-events-none absolute left-1/2 top-[20.5%] z-40 w-[92%] max-w-sm -translate-x-1/2 px-2 sm:left-6 sm:top-[25%] sm:w-[21.5rem] sm:max-w-none sm:translate-x-0"
+              initial={{ opacity: 0, y: 14, filter: "blur(8px)" }}
               animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
               exit={{ opacity: 0, y: -10, filter: "blur(6px)" }}
-              transition={{ duration: 0.3 }}
+              transition={{ duration: 0.26 }}
             >
               <div
-                className="sys-cut relative overflow-hidden border px-4 py-2.5 text-center"
+                className="sys-cut relative overflow-hidden border px-4 py-2.5 backdrop-blur-md"
                 style={{
                   borderColor: `${info.color}88`,
-                  background: "linear-gradient(180deg, rgba(20,4,8,.88), rgba(6,2,6,.92))",
-                  boxShadow: `0 0 30px ${info.color}55, inset 0 0 30px ${info.color}22`,
+                  background: "linear-gradient(180deg, rgba(20,5,12,.88), rgba(6,2,8,.94))",
+                  boxShadow: `0 0 32px ${info.color}45, inset 0 0 32px ${info.color}18`,
                 }}
               >
                 <div
                   className="absolute inset-x-0 top-0 h-[2px]"
                   style={{ background: `linear-gradient(90deg, transparent, ${info.color}, transparent)` }}
                 />
-                <div className="flex items-center justify-center gap-2 font-sys text-[8px] tracking-[0.32em]" style={{ color: info.color }}>
-                  <span className="animate-pulse">{info.glyph}</span>
-                  <span className="whitespace-nowrap">KỸ NĂNG ĐẶC BIỆT</span>
-                  <span className="hidden whitespace-nowrap opacity-60 sm:inline">· {info.tag}</span>
+                <div className="flex items-center justify-between gap-2 font-sys text-[8px] tracking-[0.24em]" style={{ color: info.color }}>
+                  <div className="flex items-center gap-1.5">
+                    <SkillGlyph kind={skill.kind} color={info.color} />
+                    <span>KỸ NĂNG BOSS</span>
+                  </div>
+                  {skill.aiLocked ? (
+                    <span className="border border-red-400/50 bg-red-950/60 px-1.5 py-0.5 text-[7px] text-red-200">
+                      AI ĐỌC VỊ
+                    </span>
+                  ) : (
+                    <span className="opacity-60">{info.tag}</span>
+                  )}
                 </div>
-                <div className="mt-1 whitespace-nowrap font-sys text-[13px] font-black tracking-[0.08em] text-white sm:text-[15px]" style={{ textShadow: `0 0 18px ${info.color}` }}>
+                <div
+                  className="mt-1 font-sys text-[12px] font-black tracking-[0.06em] text-white sm:text-[15px]"
+                  style={{ textShadow: `0 0 16px ${info.color}` }}
+                >
                   {info.name}
                 </div>
-                <div className="mt-1 text-[9px] font-semibold leading-tight tracking-[0.14em] text-white/80 sm:text-[10px]">
-                  ▸ {skill.mode === "telegraph" ? `CHUẨN BỊ · ${info.hint}` : info.hint}
+                <div className="mt-1 text-[9px] font-semibold leading-tight tracking-[0.1em] text-white/85 sm:text-[10px]">
+                  ▸{" "}
+                  {skill.mode === "counter" && info.counterHint
+                    ? info.counterHint
+                    : skill.mode === "telegraph"
+                    ? `CHUẨN BỊ · ${info.hint}`
+                    : info.hint}
                 </div>
                 <div className="mt-2 h-[3px] w-full overflow-hidden bg-white/10">
                   <motion.div
@@ -844,7 +1024,10 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                     style={{ background: info.color, boxShadow: `0 0 12px ${info.color}` }}
                     initial={{ scaleX: 1 }}
                     animate={{ scaleX: 0 }}
-                    transition={{ duration: (skill.mode === "telegraph" ? durs.tele : durs.active) / 1000, ease: "linear" }}
+                    transition={{
+                      duration: (skill.mode === "telegraph" ? durs.tele : durs.active) / 1000,
+                      ease: "linear",
+                    }}
                   />
                 </div>
               </div>
@@ -857,59 +1040,83 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           {feedback && (
             <motion.div
               key={feedback.id}
-              className="pointer-events-none absolute inset-x-0 top-[40%] z-40 text-center"
-              initial={{ opacity: 0, scale: 0.5, y: 14 }}
+              className="pointer-events-none absolute inset-x-0 top-[39%] z-40 text-center"
+              initial={{ opacity: 0, scale: 0.55, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: -6 }}
               exit={{ opacity: 0, scale: 1.1, y: -32 }}
-              transition={{ duration: 0.28 }}
+              transition={{ duration: 0.25 }}
             >
               <div
-                className="font-sys text-2xl font-black tracking-[0.2em] sm:text-4xl"
+                className="font-sys text-2xl font-black tracking-[0.18em] sm:text-4xl"
                 style={{
-                  color: feedback.kind === "bad" ? "#ff5a5a" : feedback.kind === "good" ? "#ffd86b" : "#9ad4ff",
+                  color:
+                    feedback.kind === "bad"
+                      ? "#ff5a5a"
+                      : feedback.kind === "warn"
+                      ? "#e879f9"
+                      : feedback.kind === "crit" || feedback.kind === "good"
+                      ? "#ffd86b"
+                      : "#9ad4ff",
                   textShadow:
                     feedback.kind === "bad"
-                      ? "0 0 22px #f00, 0 0 60px #900"
-                      : feedback.kind === "good"
-                      ? "0 0 22px #ffb300, 0 0 60px #ff6a00"
-                      : "0 0 22px #4fa8ff, 0 0 60px #6a5cff",
+                      ? "0 0 24px #f00, 0 0 60px #900"
+                      : feedback.kind === "warn"
+                      ? "0 0 24px #c026d3, 0 0 60px #701a75"
+                      : feedback.kind === "crit" || feedback.kind === "good"
+                      ? "0 0 24px #ffb300, 0 0 60px #ff6a00"
+                      : "0 0 24px #4fa8ff, 0 0 60px #6a5cff",
                 }}
               >
                 {feedback.text}
               </div>
               {feedback.sub && (
-                <div className="mt-1 font-sys text-[9px] tracking-[0.35em] text-white/70 sm:text-[11px]">{feedback.sub}</div>
+                <div className="mt-1 font-sys text-[9px] tracking-[0.3em] text-white/80 sm:text-[11px]">{feedback.sub}</div>
               )}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* ====== Thanh nhịp NẮM ĐẤM THẦN ====== */}
+        {/* ====== Thanh nhịp NẮM ĐẤM THẦN / PHẢN ĐÒN ====== */}
         <AnimatePresence>
           {tapWindow && (
             <motion.div
-              className="pointer-events-none absolute inset-x-0 bottom-[32%] z-40 px-5"
-              initial={{ opacity: 0, y: 18 }}
+              className="pointer-events-none absolute inset-x-0 bottom-[31%] z-40 px-5"
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
             >
               <div className="mx-auto max-w-sm">
-                <div className="sys-panel-danger sys-cut px-3 py-2.5">
-                  <div className="mb-1.5 flex items-center justify-between font-sys text-[8px] tracking-[0.28em]">
-                    <span className="text-red-200/90">NHỊP PHẢN CÔNG</span>
-                    <span className="animate-pulse text-amber-300">NHẤN [SPACE]</span>
+                <div className="sys-panel-danger sys-cut px-3.5 py-2.5">
+                  <div className="mb-1.5 flex items-center justify-between font-sys text-[8px] tracking-[0.25em]">
+                    <span className="text-red-200/90">
+                      {tapWindow.isCounter ? "PHẢN ĐÒN PHÁN XÉT" : "NHỊP PHẢN CÔNG"}
+                    </span>
+                    <span className="animate-pulse text-amber-300">NHẤN [SPACE] / CHẠM</span>
                   </div>
-                  <div className="relative h-5 overflow-hidden border border-red-400/50 bg-red-950/70">
+                  <div className="relative h-5 overflow-hidden border border-red-400/50 bg-red-950/75">
+                    {/* Vùng GOOD */}
+                    <div
+                      className="absolute inset-y-0"
+                      style={{
+                        left: tapWindow.isCounter ? "24%" : `${38 + (tapWindow.shift ?? 0) * 100}%`,
+                        width: tapWindow.isCounter ? "58%" : "40%",
+                        background: "rgba(79,168,255,0.22)",
+                        borderLeft: "1px solid rgba(124,196,255,0.5)",
+                        borderRight: "1px solid rgba(124,196,255,0.5)",
+                      }}
+                    />
+                    {/* Vùng PERFECT */}
                     <div
                       className="zone-glow absolute inset-y-0 flex items-center justify-center"
                       style={{
-                        left: "46%",
-                        width: "28%",
-                        background: "linear-gradient(90deg, rgba(255,170,50,.25), rgba(255,220,110,.9), rgba(255,170,50,.25))",
+                        left: tapWindow.isCounter ? "36%" : `${49 + (tapWindow.shift ?? 0) * 100}%`,
+                        width: tapWindow.isCounter ? "32%" : "16%",
+                        background:
+                          "linear-gradient(90deg, rgba(255,170,50,.35), rgba(255,225,120,.95), rgba(255,170,50,.35))",
                         boxShadow: "0 0 26px rgba(255,190,70,.95)",
                       }}
                     >
-                      <span className="font-sys text-[7px] font-bold tracking-[0.1em] text-[#3a1500]">PERFECT</span>
+                      <span className="font-sys text-[7px] font-black tracking-[0.08em] text-[#3a1500]">CRIT</span>
                     </div>
                     <motion.div
                       className="absolute inset-y-0 w-[3px] bg-white"
@@ -917,10 +1124,6 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                       initial={{ left: "0%" }}
                       animate={{ left: "100%" }}
                       transition={{ duration: tapWindow.dur / 1000, ease: "linear" }}
-                    />
-                    <div
-                      className="pointer-events-none absolute inset-0 opacity-40"
-                      style={{ backgroundImage: "repeating-linear-gradient(90deg, transparent 0 14px, rgba(0,0,0,.7) 14px 15px)" }}
                     />
                   </div>
                 </div>
@@ -930,17 +1133,19 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         </AnimatePresence>
 
         {/* ====== Điều khiển ====== */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-2 z-40 flex flex-col items-center gap-2 px-4">
-          {activeSkill === "laugh" ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-40 flex flex-col items-center gap-2 px-4">
+          {activeSkill?.kind === "laugh" ? (
             <>
               <div className="w-full max-w-xs">
-                <div className="mb-1 flex justify-between font-sys text-[8px] tracking-[0.28em] text-amber-200/90">
-                  <span>NỘI LỰC · CHỊU ĐÒN</span>
+                <div className="mb-1 flex justify-between font-sys text-[8px] tracking-[0.26em] text-amber-200/90">
+                  <span>NỘI LỰC KHIÊN (≥50% ĐỠ · ≥85% CHÍ MẠNG)</span>
                   <span>{Math.floor(gauge)}%</span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full border border-amber-400/40 bg-amber-950/50">
+                <div className="relative h-2.5 overflow-hidden rounded-full border border-amber-400/40 bg-amber-950/60">
+                  <div className="absolute inset-y-0 left-1/2 w-px bg-white/60" />
+                  <div className="absolute inset-y-0 left-[85%] w-px bg-amber-200" />
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-amber-300 to-red-400 shadow-[0_0_14px_#ffae42] transition-[width] duration-75"
+                    className="h-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-red-400 shadow-[0_0_14px_#ffae42] transition-[width] duration-75"
                     style={{ width: `${gauge}%` }}
                   />
                 </div>
@@ -955,40 +1160,37 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 className={`pointer-events-auto touch-none border px-7 py-2.5 font-sys text-[10px] font-bold tracking-[0.3em] transition sm:text-xs ${
                   holding
                     ? "scale-95 border-amber-200 bg-amber-500/40 text-white shadow-[0_0_36px_rgba(255,180,70,.9)]"
-                    : "border-amber-400/60 bg-amber-950/50 text-amber-100"
+                    : "border-amber-400/60 bg-amber-950/60 text-amber-100"
                 }`}
               >
-                {holding ? "ĐANG CHỊU ĐÒN…" : "GIỮ ĐỂ CHỊU ĐÒN"}
+                {holding ? "ĐANG BẬT KHIÊN…" : "GIỮ ĐỂ BẬT KHIÊN"}
               </button>
             </>
-          ) : activeSkill === "fist" ? (
+          ) : (activeSkill?.kind === "fist" && activeSkill.mode === "active") ||
+            (activeSkill?.kind === "judgment" && activeSkill.mode === "counter") ? (
             <button
               onPointerDown={tapNow}
-              className="press-pulse pointer-events-auto touch-none border border-red-400 bg-red-500/20 px-9 py-2.5 font-sys text-[10px] font-bold tracking-[0.32em] text-white sm:text-xs"
+              className="press-pulse pointer-events-auto touch-none border border-red-400 bg-red-500/25 px-9 py-2.5 font-sys text-[10px] font-bold tracking-[0.32em] text-white backdrop-blur-sm sm:text-xs"
             >
               PHẢN CÔNG · [SPACE]
             </button>
-          ) : activeSkill === "gaze" ? (
-            <div className="font-sys text-[9px] tracking-[0.28em] text-red-200/85">
-              ◀ ▶ / A · D — CHẠM VÀO LÀN ĐỂ NÉ
+          ) : skill?.kind === "gaze" || (skill?.kind === "judgment" && skill.mode !== "counter") ? (
+            <div className="font-sys text-[9px] tracking-[0.26em] text-red-200/90">
+              ◀ ▶ / A · D — CHẠM VÀO LÀN AN TOÀN
             </div>
           ) : (
-            <div className="font-sys text-[9px] tracking-[0.3em] text-white/40">THEO DÕI KỸ NĂNG CỦA BOSS…</div>
+            <div className="font-sys text-[9px] tracking-[0.3em] text-white/40">BOSS ĐANG QUAN SÁT BƯỚC DI CHUYỂN…</div>
           )}
         </div>
 
         {/* ====== Lớp phủ hiệu ứng ====== */}
         <div
           className="pointer-events-none absolute inset-0 z-[15]"
-          style={{ background: "radial-gradient(ellipse at 50% 55%, transparent 40%, rgba(255,20,10,.25) 100%)" }}
-        />
-        <div
-          className="pointer-events-none absolute inset-0 z-[15] opacity-40"
-          style={{ background: "linear-gradient(180deg, transparent 55%, rgba(255,30,10,.18))" }}
+          style={{ background: "radial-gradient(ellipse at 50% 55%, transparent 42%, rgba(255,20,10,.22) 100%)" }}
         />
         <div className="pointer-events-none absolute inset-0 z-[17] shadow-[inset_0_0_220px_rgba(0,0,0,.95)]" />
         <div
-          className="pointer-events-none absolute inset-0 z-[17] opacity-[0.05]"
+          className="pointer-events-none absolute inset-0 z-[17] opacity-[0.04]"
           style={{ backgroundImage: "repeating-linear-gradient(0deg, #fff 0 1px, transparent 1px 3px)" }}
         />
 
@@ -1007,11 +1209,6 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           className={`pointer-events-none absolute inset-0 z-[26] ${hitKey ? "hit-flash" : "opacity-0"}`}
           style={{ boxShadow: "inset 0 0 170px 40px rgba(255,0,0,.9)", background: "rgba(255,0,0,.16)" }}
         />
-        <div
-          key={`s-${strikeKey}`}
-          className={`pointer-events-none absolute inset-0 z-[26] ${strikeKey ? "red-bloom" : "opacity-0"}`}
-          style={{ background: "radial-gradient(ellipse at 50% 0%, rgba(255,120,60,.5), transparent 70%)" }}
-        />
       </motion.div>
 
       {/* vùng chạm né / phản công */}
@@ -1026,17 +1223,17 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             exit={{ opacity: 0 }}
             transition={{ duration: 0.8 }}
           >
-            <div className="pointer-events-none absolute inset-0 opacity-45">
+            <div className="pointer-events-none absolute inset-0 opacity-55">
               <motion.img
                 src={bossIdle}
                 alt=""
-                className="h-full w-full object-cover object-top"
+                className="h-full w-full object-cover object-[50%_26%]"
                 initial={{ scale: 1.35, opacity: 0 }}
-                animate={{ scale: 1.05, opacity: 0.55 }}
+                animate={{ scale: 1.05, opacity: 0.65 }}
                 transition={{ duration: 3.2, ease: "easeOut" }}
-                style={{ mixBlendMode: "screen", filter: "saturate(.5) brightness(.9)" }}
+                style={{ mixBlendMode: "screen", filter: "saturate(.8) brightness(1)" }}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#04020a] via-[#04020a]/60 to-[#04020a]/30" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#04020a] via-[#04020a]/55 to-[#04020a]/30" />
             </div>
 
             <motion.div
@@ -1049,7 +1246,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 [ HỆ THỐNG · CẢNH BÁO CỰC ĐỘ ]
               </div>
               <div className="mt-3 h-px w-40 bg-gradient-to-r from-transparent via-red-500 to-transparent" />
-              <div className="mt-4 font-sys text-[10px] tracking-[0.4em] text-red-200/70 sm:text-xs">
+              <div className="mt-4 font-sys text-[10px] tracking-[0.4em] text-red-200/75 sm:text-xs">
                 SINH VẬT CẤP SSS ĐÃ XUẤT HIỆN
               </div>
               <h2
@@ -1061,21 +1258,21 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 MỈM CƯỜI
               </h2>
               <motion.p
-                className="mt-4 max-w-md text-xs leading-relaxed text-red-100/70 sm:text-sm"
+                className="mt-4 max-w-md text-xs leading-relaxed text-red-100/75 sm:text-sm"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.9, duration: 1 }}
               >
-                “Kẻ nào còn đứng trong sảnh đường này… sẽ cười cùng ta mãi mãi.”
+                “Ta nhìn thấu từng bước chạy trốn của ngươi. Hãy xem ngươi trụ được bao lâu.”
               </motion.p>
               <motion.div
-                className="mt-5 flex items-center gap-2 font-sys text-[9px] tracking-[0.35em] text-amber-300/90"
+                className="mt-5 flex items-center gap-2 font-sys text-[9px] tracking-[0.3em] text-amber-300/90"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 1.5, duration: 0.8 }}
               >
                 <span className="h-1.5 w-1.5 animate-pulse bg-red-500" />
-                NÉ · CHỊU ĐÒN · PHẢN CÔNG
+                NÉ · CHỊU ĐÒN · PHẢN CÔNG · PHÁ ĐỌC VỊ
               </motion.div>
             </motion.div>
 
@@ -1107,14 +1304,16 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
               transition={{ duration: 0.7, ease: [0.2, 0.9, 0.2, 1] }}
             >
-              <div className="font-sys text-[10px] tracking-[0.5em] text-amber-300">PHA 2 · BOSS CUỒNG NỘ</div>
+              <div className="font-sys text-[10px] tracking-[0.5em] text-amber-300">PHA 2 · MỞ KHÓA PHÁN XÉT KÉP</div>
               <div
                 className="mt-2 font-sys text-4xl font-black tracking-[0.16em] text-white sm:text-7xl"
                 style={{ textShadow: "0 0 30px #ff2a10, 0 0 90px #900" }}
               >
                 CUỒNG NỘ
               </div>
-              <div className="mt-3 font-sys text-[10px] tracking-[0.35em] text-red-200/80">TỐC ĐỘ · SÁT THƯƠNG · TĂNG VỌT</div>
+              <div className="mt-3 font-sys text-[10px] tracking-[0.35em] text-red-200/85">
+                AI ĐỌC VỊ TĂNG TỐC · TỨ THỦ THỨC TỈNH
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -1154,7 +1353,9 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 ĐIỆU CƯỜI TỬ THẦN
               </div>
               <div className="mx-auto mt-3 h-px w-40 bg-gradient-to-r from-transparent via-red-500 to-transparent" />
-              <div className="mt-3 font-sys text-[9px] tracking-[0.32em] text-red-100/80">THANH MÁU CUỐI · KHÔNG THỂ LÙI BƯỚC</div>
+              <div className="mt-3 font-sys text-[9px] tracking-[0.32em] text-red-100/80">
+                THANH MÁU CUỐI · CẨN THẬN ĐÒN ĐỔI HƯỚNG
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -1169,7 +1370,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="absolute inset-0 white-bloom pointer-events-none bg-white mix-blend-screen" />
+            <div className="white-bloom pointer-events-none absolute inset-0 bg-white mix-blend-screen" />
             <motion.div
               initial={{ scale: 1.6, opacity: 0, filter: "blur(18px)" }}
               animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
@@ -1198,10 +1399,4 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
       </div>
     </motion.div>
   );
-}
-
-function pickDangerLanes() {
-  const all = [0, 1, 2];
-  const safe = all[Math.floor(Math.random() * 3)];
-  return all.filter((l) => l !== safe);
 }
