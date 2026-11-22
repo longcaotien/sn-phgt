@@ -1,6 +1,7 @@
 import {
   analyzeWithGemini,
   hasGeminiApiKey,
+  setGeminiDiag,
   type GeminiStatus,
   type GeminiTactic,
 } from "./geminiAI";
@@ -17,17 +18,20 @@ export type PredictionSnapshot = {
   reason: string;
   warmedUp: boolean;
   geminiStatus: GeminiStatus;
+  geminiError?: string;
   geminiTaunt?: string;
   prioritySkill?: SkillKind;
 };
 
 const LANE_NAMES = ["TRÁI", "GIỮA", "PHẢI"];
-const STORAGE_KEY = "sl_boss_ml_v1";
+const STORAGE_KEY = "sl_boss_ml_v2";
 const FEAT_DIM = 10;
 
 type PersistedML = {
   weights: number[][];
   laneCounts: [number, number, number];
+  bigrams: number[][][]; // [prev2][prev1][next]
+  skillDodge: Record<SkillKind, [number, number, number]>;
   samples: number;
   evalTotal: number;
   evalCorrect: number;
@@ -45,6 +49,10 @@ function emptyWeights(): number[][] {
   ];
 }
 
+function emptyBigrams(): number[][][] {
+  return [0, 1, 2].map(() => [0, 1, 2].map(() => [0, 0, 0]));
+}
+
 function softmax(logits: number[]): [number, number, number] {
   const maxL = Math.max(logits[0], logits[1], logits[2]);
   const exps = logits.map((l) => Math.exp(Math.max(-20, Math.min(20, l - maxL))));
@@ -54,6 +62,7 @@ function softmax(logits: number[]): [number, number, number] {
 
 export function resetBossML() {
   try {
+    localStorage.removeItem("sl_boss_ml_v1");
     localStorage.removeItem(STORAGE_KEY);
   } catch {
     // ignore storage errors
@@ -63,6 +72,13 @@ export function resetBossML() {
 export class PlayerBehaviorTracker {
   private weights: number[][] = emptyWeights();
   private laneCounts: [number, number, number] = [1, 1, 1];
+  private bigrams: number[][][] = emptyBigrams();
+  private skillDodge: Record<SkillKind, [number, number, number]> = {
+    gaze: [0, 0, 0],
+    laugh: [0, 0, 0],
+    fist: [0, 0, 0],
+    judgment: [0, 0, 0],
+  };
   private samples = 0;
   private evalTotal = 0;
   private evalCorrect = 0;
@@ -76,44 +92,61 @@ export class PlayerBehaviorTracker {
   private reactionSamples: number[] = [];
   private fistTimingOffsets: number[] = [];
   private lastDangerKey = "";
+  private activeSkillContext: SkillKind | null = null;
   private geminiTactic: GeminiTactic | null = null;
   private geminiStatus: GeminiStatus = hasGeminiApiKey() ? "ready" : "off";
+  private geminiError: string | undefined = undefined;
   private geminiBusy = false;
   private lastGeminiAt = 0;
+  private lastGeminiCooldown = 6000;
   private lastGeminiSamples = 0;
 
   constructor(persist = false) {
     if (persist) this.load();
   }
 
+  setSkillContext(kind: SkillKind | null) {
+    this.activeSkillContext = kind;
+  }
+
   refreshGeminiState() {
     if (!hasGeminiApiKey()) {
       this.geminiStatus = "off";
       this.geminiTactic = null;
+      this.geminiError = undefined;
     } else if (this.geminiStatus === "off") {
       this.geminiStatus = "ready";
+      this.geminiError = undefined;
     }
   }
 
-  /** Gọi Gemini 2.5 Flash phân tích chiến thuật ở nền (không bao giờ làm khựng game) */
-  maybeSyncGemini(currentLane: number, stage: 1 | 2 | 3, onUpdate?: (snap: PredictionSnapshot) => void) {
+  /** Gọi Gemini phân tích chiến thuật ở nền (không bao giờ làm khựng game) */
+  maybeSyncGemini(
+    currentLane: number,
+    stage: 1 | 2 | 3,
+    lastSkill: SkillKind | null,
+    onUpdate?: (snap: PredictionSnapshot) => void
+  ) {
     this.refreshGeminiState();
     if (!hasGeminiApiKey()) return;
     if (this.samples < 3 || this.geminiBusy) return;
 
     const now = Date.now();
-    const enoughNewSamples = !this.geminiTactic || this.samples - this.lastGeminiSamples >= 4;
-    const cooledDown = now - this.lastGeminiAt >= 7500;
+    const enoughNewSamples = !this.geminiTactic || this.samples - this.lastGeminiSamples >= 3;
+    const cooledDown = now - this.lastGeminiAt >= this.lastGeminiCooldown;
     if (!enoughNewSamples || !cooledDown) return;
 
     this.geminiBusy = true;
     this.geminiStatus = "syncing";
     this.lastGeminiAt = now;
     this.lastGeminiSamples = this.samples;
+    setGeminiDiag({ status: "syncing" });
+    onUpdate?.(this.predict(currentLane));
 
     const mlSnap = this.predict(currentLane);
     analyzeWithGemini({
       currentLane,
+      lastSkill: lastSkill ?? this.activeSkillContext,
       stage,
       samples: this.samples,
       accuracy: mlSnap.accuracy,
@@ -128,18 +161,23 @@ export class PlayerBehaviorTracker {
         judgment: { attempts: this.skillAttempts.judgment, fails: this.skillFails.judgment },
       },
     })
-      .then((tactic) => {
-        if (tactic) {
-          this.geminiTactic = tactic;
+      .then((res) => {
+        if (res.tactic) {
+          this.geminiTactic = res.tactic;
           this.geminiStatus = "active";
-          onUpdate?.(this.predict(currentLane));
+          this.geminiError = undefined;
+          this.lastGeminiCooldown = 6000;
         } else {
           this.geminiStatus = hasGeminiApiKey() ? "error" : "off";
-          onUpdate?.(this.predict(currentLane));
+          this.geminiError = res.error;
+          this.lastGeminiCooldown = res.rateLimited ? 15000 : 8000;
         }
+        onUpdate?.(this.predict(currentLane));
       })
       .catch(() => {
         this.geminiStatus = "error";
+        this.geminiError = "Lỗi kết nối bất ngờ";
+        this.lastGeminiCooldown = 10000;
         onUpdate?.(this.predict(currentLane));
       })
       .finally(() => {
@@ -157,21 +195,31 @@ export class PlayerBehaviorTracker {
         data.weights.length === 3 &&
         data.weights.every((r) => Array.isArray(r) && r.length === FEAT_DIM)
       ) {
-        // Decay nhẹ để mô hình vẫn giữ trí nhớ nhưng nhanh chóng thích nghi nếu người chơi đổi chiến thuật
-        this.weights = data.weights.map((row) => row.map((w) => w * 0.85));
+        this.weights = data.weights.map((row) => row.map((w) => w * 0.86));
       }
       if (Array.isArray(data.laneCounts) && data.laneCounts.length === 3) {
         this.laneCounts = [
-          Math.max(1, data.laneCounts[0] * 0.7),
-          Math.max(1, data.laneCounts[1] * 0.7),
-          Math.max(1, data.laneCounts[2] * 0.7),
+          Math.max(1, data.laneCounts[0] * 0.72),
+          Math.max(1, data.laneCounts[1] * 0.72),
+          Math.max(1, data.laneCounts[2] * 0.72),
         ];
       }
-      if (typeof data.samples === "number") this.samples = Math.min(200, data.samples);
-      if (typeof data.evalTotal === "number") this.evalTotal = Math.min(200, data.evalTotal);
+      if (Array.isArray(data.bigrams) && data.bigrams.length === 3) {
+        this.bigrams = data.bigrams.map((m) => m.map((row) => row.map((v) => v * 0.75)));
+      }
+      if (data.skillDodge) {
+        this.skillDodge = {
+          gaze: (data.skillDodge.gaze?.map((v) => v * 0.75) as [number, number, number]) ?? [0, 0, 0],
+          laugh: (data.skillDodge.laugh?.map((v) => v * 0.75) as [number, number, number]) ?? [0, 0, 0],
+          fist: (data.skillDodge.fist?.map((v) => v * 0.75) as [number, number, number]) ?? [0, 0, 0],
+          judgment: (data.skillDodge.judgment?.map((v) => v * 0.75) as [number, number, number]) ?? [0, 0, 0],
+        };
+      }
+      if (typeof data.samples === "number") this.samples = Math.min(250, data.samples);
+      if (typeof data.evalTotal === "number") this.evalTotal = Math.min(250, data.evalTotal);
       if (typeof data.evalCorrect === "number") this.evalCorrect = Math.min(this.evalTotal, data.evalCorrect);
-      if (typeof data.leftMoves === "number") this.leftMoves = data.leftMoves * 0.7;
-      if (typeof data.rightMoves === "number") this.rightMoves = data.rightMoves * 0.7;
+      if (typeof data.leftMoves === "number") this.leftMoves = data.leftMoves * 0.72;
+      if (typeof data.rightMoves === "number") this.rightMoves = data.rightMoves * 0.72;
       if (data.skillFails) this.skillFails = { ...this.skillFails, ...data.skillFails };
       if (data.skillAttempts) this.skillAttempts = { ...this.skillAttempts, ...data.skillAttempts };
     } catch {
@@ -184,6 +232,8 @@ export class PlayerBehaviorTracker {
       const payload: PersistedML = {
         weights: this.weights,
         laneCounts: this.laneCounts,
+        bigrams: this.bigrams,
+        skillDodge: this.skillDodge,
         samples: this.samples,
         evalTotal: this.evalTotal,
         evalCorrect: this.evalCorrect,
@@ -206,7 +256,7 @@ export class PlayerBehaviorTracker {
       h.length >= 4 && h[h.length - 1] === h[h.length - 3] && h[h.length - 2] === h[h.length - 4] ? 1 : 0;
 
     return [
-      1.0, // bias
+      1.0,
       currentLane === 0 ? 1 : 0,
       currentLane === 1 ? 1 : 0,
       currentLane === 2 ? 1 : 0,
@@ -229,11 +279,29 @@ export class PlayerBehaviorTracker {
     return softmax(logits);
   }
 
+  private getBigramProbs(currentLane: number): [number, number, number] | null {
+    const h = this.moveHistory;
+    if (h.length < 2) return null;
+    const prev2 = h[h.length - 2];
+    const counts = this.bigrams[prev2]?.[currentLane];
+    if (!counts) return null;
+    const sum = counts[0] + counts[1] + counts[2];
+    if (sum < 1.5) return null;
+    return [(counts[0] + 0.35) / (sum + 1.05), (counts[1] + 0.35) / (sum + 1.05), (counts[2] + 0.35) / (sum + 1.05)];
+  }
+
+  private getSkillBiasProbs(): [number, number, number] | null {
+    if (!this.activeSkillContext) return null;
+    const c = this.skillDodge[this.activeSkillContext];
+    const sum = c[0] + c[1] + c[2];
+    if (sum < 2) return null;
+    return [(c[0] + 0.4) / (sum + 1.2), (c[1] + 0.4) / (sum + 1.2), (c[2] + 0.4) / (sum + 1.2)];
+  }
+
   /** Huấn luyện trực tuyến (Online SGD) mỗi khi người chơi chuyển làn hoặc cố thủ */
-  private trainStep(features: number[], targetLane: number, lr = 0.3, l2 = 0.012) {
+  private trainStep(features: number[], targetLane: number, lr = 0.32, l2 = 0.01) {
     const probs = this.forward(features);
 
-    // Đánh giá độ chính xác thực tế trước khi cập nhật trọng số
     let pred = 0;
     if (probs[1] > probs[pred]) pred = 1;
     if (probs[2] > probs[pred]) pred = 2;
@@ -256,7 +324,15 @@ export class PlayerBehaviorTracker {
   recordMove(fromLane: number, toLane: number, reactionMs?: number, persist = false) {
     if (fromLane === toLane) return;
     const x = this.extractFeatures(fromLane);
-    this.trainStep(x, toLane, 0.34);
+    this.trainStep(x, toLane, 0.36);
+
+    if (this.moveHistory.length >= 1) {
+      const prev2 = this.moveHistory[this.moveHistory.length - 1];
+      this.bigrams[prev2][fromLane][toLane] += 1;
+    }
+    if (this.activeSkillContext) {
+      this.skillDodge[this.activeSkillContext][toLane] += 1;
+    }
 
     const dir = toLane > fromLane ? 1 : -1;
     this.prevDir2 = this.prevDir;
@@ -266,7 +342,7 @@ export class PlayerBehaviorTracker {
 
     this.laneCounts[toLane] += 1;
     this.moveHistory.push(toLane);
-    if (this.moveHistory.length > 16) this.moveHistory.shift();
+    if (this.moveHistory.length > 18) this.moveHistory.shift();
 
     if (reactionMs !== undefined && reactionMs > 50 && reactionMs < 2500) {
       this.reactionSamples.push(reactionMs);
@@ -277,7 +353,10 @@ export class PlayerBehaviorTracker {
 
   recordStay(lane: number, persist = false) {
     const x = this.extractFeatures(lane);
-    this.trainStep(x, lane, 0.2);
+    this.trainStep(x, lane, 0.22);
+    if (this.activeSkillContext) {
+      this.skillDodge[this.activeSkillContext][lane] += 0.6;
+    }
     this.prevDir2 = this.prevDir;
     this.prevDir = 0;
     this.laneCounts[lane] += 0.6;
@@ -299,29 +378,46 @@ export class PlayerBehaviorTracker {
     return this.reactionSamples.reduce((a, b) => a + b, 0) / this.reactionSamples.length;
   }
 
-  /** Dự đoán phân bố xác suất 3 làn bằng mô hình Softmax + chiến thuật Gemini (nếu có) */
+  /** Dự đoán phân bố xác suất 3 làn bằng tổ hợp: Softmax + Markov 2 bước + Thiên hướng theo chiêu + Gemini */
   predict(currentLane: number): PredictionSnapshot {
     this.refreshGeminiState();
     const warmedUp = this.samples >= 3;
     const x = this.extractFeatures(currentLane);
-    const mlProbs = warmedUp ? this.forward(x) : ([0.33, 0.34, 0.33] as [number, number, number]);
+    const softProbs = warmedUp ? this.forward(x) : ([0.33, 0.34, 0.33] as [number, number, number]);
+
+    // Kết hợp Softmax + Bigram Markov + Skill Dodge Bias
+    const bigramProbs = warmedUp ? this.getBigramProbs(currentLane) : null;
+    const skillProbs = warmedUp ? this.getSkillBiasProbs() : null;
+
+    const localProbs: [number, number, number] = [softProbs[0], softProbs[1], softProbs[2]];
+    if (bigramProbs && skillProbs) {
+      for (let i = 0; i < 3; i++) {
+        localProbs[i] = softProbs[i] * 0.62 + bigramProbs[i] * 0.23 + skillProbs[i] * 0.15;
+      }
+    } else if (bigramProbs) {
+      for (let i = 0; i < 3; i++) {
+        localProbs[i] = softProbs[i] * 0.72 + bigramProbs[i] * 0.28;
+      }
+    } else if (skillProbs) {
+      for (let i = 0; i < 3; i++) {
+        localProbs[i] = softProbs[i] * 0.8 + skillProbs[i] * 0.2;
+      }
+    }
 
     const gemValid =
       warmedUp &&
       this.geminiTactic !== null &&
       hasGeminiApiKey() &&
-      Date.now() - this.geminiTactic.updatedAt <= 60_000;
+      Date.now() - this.geminiTactic.updatedAt <= 75_000;
 
-    // Trộn 65% Online ML cục bộ + 35% Gemini Strategic Prior
     const probs: [number, number, number] = gemValid
       ? [
-          mlProbs[0] * 0.65 + this.geminiTactic!.laneProbs[0] * 0.35,
-          mlProbs[1] * 0.65 + this.geminiTactic!.laneProbs[1] * 0.35,
-          mlProbs[2] * 0.65 + this.geminiTactic!.laneProbs[2] * 0.35,
+          localProbs[0] * 0.65 + this.geminiTactic!.laneProbs[0] * 0.35,
+          localProbs[1] * 0.65 + this.geminiTactic!.laneProbs[1] * 0.35,
+          localProbs[2] * 0.65 + this.geminiTactic!.laneProbs[2] * 0.35,
         ]
-      : mlProbs;
+      : localProbs;
 
-    // Nếu phát hiện chu kỳ đảo làn rõ ràng, cộng nhẹ tín hiệu suy luận
     const h = this.moveHistory;
     let altTarget = -1;
     if (warmedUp && h.length >= 4 && h[h.length - 1] === h[h.length - 3] && h[h.length - 2] === h[h.length - 4]) {
@@ -341,7 +437,7 @@ export class PlayerBehaviorTracker {
     const dataScale = Math.min(1, this.samples / 8);
     const geminiAgreement = gemValid && this.geminiTactic!.predictedNextLane === best ? 0.06 : 0;
     const confidence = warmedUp
-      ? Math.min(0.96, 0.35 + (maxP - 0.33) * 0.9 * dataScale + dataScale * 0.12 + geminiAgreement)
+      ? Math.min(0.97, 0.36 + (maxP - 0.33) * 0.92 * dataScale + dataScale * 0.12 + geminiAgreement)
       : 0.25;
     const accuracy = this.evalTotal > 0 ? Math.round((this.evalCorrect / this.evalTotal) * 100) : 0;
 
@@ -353,6 +449,10 @@ export class PlayerBehaviorTracker {
       reason = this.geminiTactic!.patternSummary;
     } else if (altTarget === best) {
       reason = "PHÁT HIỆN ĐẢO LÀN LẶP";
+    } else if (bigramProbs && bigramProbs[best] > 0.45) {
+      reason = `CHUỖI MARKOV → ${LANE_NAMES[best]}`;
+    } else if (skillProbs && skillProbs[best] > 0.45) {
+      reason = `THÓI QUEN NÉ CHIÊU → ${LANE_NAMES[best]}`;
     } else if (best < currentLane && this.leftMoves / dirTotal > 0.6) {
       reason = "XU HƯỚNG DẠT TRÁI";
     } else if (best > currentLane && this.rightMoves / dirTotal > 0.6) {
@@ -371,6 +471,7 @@ export class PlayerBehaviorTracker {
       reason,
       warmedUp,
       geminiStatus: this.geminiStatus,
+      geminiError: this.geminiError,
       geminiTaunt: gemValid ? this.geminiTactic!.taunt : undefined,
       prioritySkill: gemValid ? this.geminiTactic!.prioritySkill : undefined,
     };
@@ -378,8 +479,8 @@ export class PlayerBehaviorTracker {
 
   /**
    * Chọn làn nguy hiểm.
-   * - Khi chưa đủ mẫu (warmedUp === false): bốc ngẫu nhiên thực sự và tránh lặp cặp cũ (tránh mở màn luôn bắn 1 cặp cố định).
-   * - Khi mô hình đã học (>= 3 mẫu): dùng phân bố xác suất Softmax để khóa làn hiện tại + làn dự đoán cao nhất.
+   * - Khi chưa đủ mẫu (warmedUp === false): bốc ngẫu nhiên thực sự và tránh lặp cặp cũ.
+   * - Khi mô hình đã học (>= 3 mẫu): khóa làn hiện tại + làn dự đoán cao nhất.
    */
   pickTargetedLanes(
     currentLane: number,
@@ -402,7 +503,6 @@ export class PlayerBehaviorTracker {
     }
 
     if (canAdapt) {
-      // Khóa làn hiện tại + làn có xác suất Softmax cao nhất khác làn hiện tại
       const others = [0, 1, 2].filter((l) => l !== currentLane);
       others.sort((a, b) => snap.probs[b] - snap.probs[a]);
       const second = snap.predictedLane !== currentLane ? snap.predictedLane : others[0];
@@ -411,7 +511,6 @@ export class PlayerBehaviorTracker {
       return { lanes, predicted: snap, aiUsed: true };
     }
 
-    // Ngẫu nhiên công bằng và không lặp cặp nguy hiểm liên tiếp ở màn mở đầu
     const pairs = [
       [0, 1],
       [1, 2],
@@ -422,7 +521,6 @@ export class PlayerBehaviorTracker {
     return { lanes: chosen, predicted: snap, aiUsed: false };
   }
 
-  /** Chọn kỹ năng boss theo điểm yếu của người chơi (exploration + failure rate) */
   pickBossSkill(lastKind: SkillKind | null, stage: 1 | 2 | 3): SkillKind {
     const basePool: SkillKind[] = stage >= 2 ? ["gaze", "laugh", "fist", "judgment"] : ["gaze", "laugh", "fist"];
     const candidates = basePool.filter((k) => k !== lastKind);
@@ -434,7 +532,7 @@ export class PlayerBehaviorTracker {
       const stageBoost = k === "judgment" && stage >= 2 ? 0.35 : 0;
       const geminiBoost =
         this.geminiTactic &&
-        Date.now() - this.geminiTactic.updatedAt <= 60_000 &&
+        Date.now() - this.geminiTactic.updatedAt <= 75_000 &&
         this.geminiTactic.prioritySkill === k
           ? 0.9
           : 0;
@@ -457,11 +555,9 @@ export class PlayerBehaviorTracker {
     return base * adapt;
   }
 
-  /** Điều chỉnh tâm vùng CRIT của Nắm Đấm Thần dựa theo xu hướng nhấn sớm/muộn */
   getFistTimingShift(): number {
     if (this.fistTimingOffsets.length < 3) return 0;
     const mean = this.fistTimingOffsets.reduce((a, b) => a + b, 0) / this.fistTimingOffsets.length;
-    // Dịch nhẹ tối đa ±0.04 theo xu hướng người chơi để buộc phải canh chuẩn
     return Math.max(-0.04, Math.min(0.04, (mean - 0.57) * 0.25));
   }
 }

@@ -337,6 +337,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         const speed = tracker.getSpeedMultiplier(stage);
         const kind = tracker.pickBossSkill(lastKind, stage);
         lastKind = kind;
+        tracker.setSkillContext(kind);
         const id = ++idRef.current;
 
         const teleMs = Math.round((kind === "judgment" ? 780 : 840) * speed);
@@ -364,7 +365,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         }
 
         // Đồng bộ phân tích chiến thuật với Gemini (chạy nền, không làm khựng trận)
-        tracker.maybeSyncGemini(laneRef.current, stage, (nextSnap) => {
+        tracker.maybeSyncGemini(laneRef.current, stage, kind, (nextSnap) => {
           if (!cancelled) setPrediction(nextSnap);
         });
 
@@ -928,6 +929,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               )}
               {prediction.geminiStatus !== "off" && (
                 <span
+                  title={prediction.geminiStatus === "error" ? prediction.geminiError : undefined}
                   className={`rounded-sm px-1 py-px text-[6.5px] sm:text-[7px] ${
                     prediction.geminiStatus === "active"
                       ? "border border-cyan-400/50 bg-cyan-950/60 text-cyan-200"
@@ -943,7 +945,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                     : prediction.geminiStatus === "syncing"
                     ? "GEMINI…"
                     : prediction.geminiStatus === "error"
-                    ? "GEMINI LỖI"
+                    ? "GEMINI LỖI (XEM KEY)"
                     : "GEMINI SẴN SÀNG"}
                 </span>
               )}

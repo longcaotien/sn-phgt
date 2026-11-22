@@ -291,7 +291,7 @@ export default function Chapter2({
         }
         tracker.recordStay(laneRef.current, true);
         setDodgePred(tracker.predict(laneRef.current));
-        tracker.maybeSyncGemini(laneRef.current, 1, (s) => {
+        tracker.maybeSyncGemini(laneRef.current, 1, "gaze", (s) => {
           if (!cancelled) setDodgePred(s);
         });
         threatWarnAtRef.current = 0;

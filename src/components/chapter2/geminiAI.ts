@@ -1,8 +1,15 @@
 import type { SkillKind } from "./bossAI";
 
 const KEY_STORAGE = "sl_gemini_api_key";
-const MODEL = "gemini-2.5-flash";
+const MODEL_STORAGE = "sl_gemini_model";
 
+export const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+] as const;
+
+export type GeminiModelChoice = "auto" | (typeof GEMINI_MODELS)[number];
 export type GeminiStatus = "off" | "ready" | "syncing" | "active" | "error";
 
 export type GeminiTactic = {
@@ -11,11 +18,22 @@ export type GeminiTactic = {
   prioritySkill: SkillKind;
   patternSummary: string;
   taunt: string;
+  modelUsed: string;
+  latencyMs: number;
   updatedAt: number;
+};
+
+export type GeminiDiag = {
+  status: GeminiStatus;
+  lastError: string | null;
+  lastModel: string | null;
+  lastLatencyMs: number | null;
+  successCount: number;
 };
 
 export type TelemetryPayload = {
   currentLane: number;
+  lastSkill: SkillKind | null;
   stage: 1 | 2 | 3;
   samples: number;
   accuracy: number;
@@ -25,6 +43,23 @@ export type TelemetryPayload = {
   avgReactionMs: number;
   skillStats: Record<SkillKind, { attempts: number; fails: number }>;
 };
+
+let diagState: GeminiDiag = {
+  status: hasGeminiApiKey() ? "ready" : "off",
+  lastError: null,
+  lastModel: null,
+  lastLatencyMs: null,
+  successCount: 0,
+};
+
+export function getGeminiDiag(): GeminiDiag {
+  return { ...diagState };
+}
+
+export function setGeminiDiag(patch: Partial<GeminiDiag>) {
+  diagState = { ...diagState, ...patch };
+  window.dispatchEvent(new Event("sl-gemini-diag-changed"));
+}
 
 export function getGeminiApiKey(): string {
   try {
@@ -44,6 +79,30 @@ export function setGeminiApiKey(key: string) {
     else localStorage.removeItem(KEY_STORAGE);
   } catch {
     // ignore storage errors
+  }
+  setGeminiDiag({
+    status: clean ? "ready" : "off",
+    lastError: null,
+  });
+}
+
+export function getGeminiModelChoice(): GeminiModelChoice {
+  try {
+    const saved = localStorage.getItem(MODEL_STORAGE) as GeminiModelChoice | null;
+    if (saved === "auto" || (saved && (GEMINI_MODELS as readonly string[]).includes(saved))) {
+      return saved;
+    }
+  } catch {
+    // ignore
+  }
+  return "auto";
+}
+
+export function setGeminiModelChoice(m: GeminiModelChoice) {
+  try {
+    localStorage.setItem(MODEL_STORAGE, m);
+  } catch {
+    // ignore
   }
 }
 
@@ -72,97 +131,215 @@ function normalizeSkill(raw: unknown): SkillKind {
   return "gaze";
 }
 
-export async function testGeminiConnection(apiKey?: string): Promise<{ ok: boolean; message: string }> {
-  const key = (apiKey ?? getGeminiApiKey()).trim();
-  if (!key) return { ok: false, message: "Chưa nhập API Key." };
+/** Trích xuất JSON an toàn ngay cả khi model bọc ```json ... ``` hoặc thêm văn bản phụ */
+function extractJson(rawText: string): Record<string, unknown> | null {
+  const cleaned = rawText
+    .replace(/```json\s*/gi, "")
+    .replace(/```\s*/g, "")
+    .trim();
+  try {
+    return JSON.parse(cleaned) as Record<string, unknown>;
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start !== -1 && end > start) {
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
 
+async function callGeminiOnce(
+  key: string,
+  model: string,
+  body: Record<string, unknown>,
+  timeoutMs: number
+): Promise<{ ok: true; text: string; latencyMs: number } | { ok: false; status: number; error: string }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t0 = performance.now();
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: ctrl.signal,
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: 'Trả về đúng JSON: {"ok":true}' }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            maxOutputTokens: 24,
-            temperature: 0,
-          },
-        }),
+        body: JSON.stringify(body),
       }
     );
+    const latencyMs = Math.round(performance.now() - t0);
+
     if (!res.ok) {
       const errData = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
       const msg = errData?.error?.message || `HTTP ${res.status}`;
-      return { ok: false, message: `Lỗi Gemini: ${msg}` };
+      return { ok: false, status: res.status, error: msg };
     }
-    return { ok: true, message: "Kết nối Gemini 2.5 Flash thành công!" };
+
+    const data = (await res.json()) as {
+      candidates?: Array<{
+        finishReason?: string;
+        content?: { parts?: Array<{ text?: string }> };
+      }>;
+    };
+    const candidate = data.candidates?.[0];
+    const parts = candidate?.content?.parts ?? [];
+    const text = parts.map((p) => p.text ?? "").join("").trim();
+    if (!text) {
+      return {
+        ok: false,
+        status: 500,
+        error: `Phản hồi rỗng (${candidate?.finishReason ?? "unknown"})`,
+      };
+    }
+    return { ok: true, text, latencyMs };
   } catch (e) {
-    const msg = e instanceof Error && e.name === "AbortError" ? "Quá thời gian chờ (timeout)." : "Không thể kết nối máy chủ Gemini.";
-    return { ok: false, message: msg };
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? "Hết thời gian chờ phản hồi"
+        : e instanceof Error
+        ? e.message
+        : "Lỗi mạng khi gọi Gemini";
+    return { ok: false, status: 0, error: msg };
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function analyzeWithGemini(payload: TelemetryPayload): Promise<GeminiTactic | null> {
-  const key = getGeminiApiKey();
-  if (!key) return null;
+function getCandidateModels(): string[] {
+  const choice = getGeminiModelChoice();
+  if (choice === "auto") return [...GEMINI_MODELS];
+  return [choice, ...GEMINI_MODELS.filter((m) => m !== choice)];
+}
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 6500);
+export async function testGeminiConnection(
+  apiKey?: string
+): Promise<{ ok: boolean; message: string; model?: string; latencyMs?: number }> {
+  const key = (apiKey ?? getGeminiApiKey()).trim();
+  if (!key) return { ok: false, message: "Chưa nhập API Key." };
 
-  const laneText = payload.moveHistory.slice(-12).map((l) => (l === 0 ? "TRÁI" : l === 1 ? "GIỮA" : "PHẢI")).join(" -> ");
-  const prompt = `Bạn là lõi AI chiến thuật "Tượng Thần Mỉm Cười" (Solo Leveling). Hãy phân tích dữ liệu hành vi người chơi để đọc vị bước né tiếp theo.
-Dữ liệu hiện tại:
-- Làn đang đứng: ${payload.currentLane} (0=TRÁI, 1=GIỮA, 2=PHẢI)
-- Pha Boss: ${payload.stage}/3 | Số mẫu đã học: ${payload.samples} | Độ chính xác ML cục bộ: ${payload.accuracy}%
-- Chuỗi di chuyển gần nhất: ${laneText || "chưa di chuyển nhiều"}
-- Tần suất ở 3 làn [TRÁI, GIỮA, PHẢI]: [${payload.laneCounts.map((n) => n.toFixed(1)).join(", ")}]
-- Xác suất ML cục bộ [0,1,2]: [${payload.mlProbs.map((p) => p.toFixed(2)).join(", ")}]
-- Phản xạ trung bình: ${Math.round(payload.avgReactionMs)}ms
-- Tỷ lệ dính đòn theo chiêu: gaze=${payload.skillStats.gaze.fails}/${payload.skillStats.gaze.attempts}, laugh=${payload.skillStats.laugh.fails}/${payload.skillStats.laugh.attempts}, fist=${payload.skillStats.fist.fails}/${payload.skillStats.fist.attempts}, judgment=${payload.skillStats.judgment.fails}/${payload.skillStats.judgment.attempts}
+  const models = getCandidateModels();
+  let lastErr = "Không thể kết nối.";
 
-Trả về JSON thuần theo đúng schema:
-{
-  "predictedNextLane": 0 | 1 | 2,
-  "laneProbs": [number, number, number],
-  "prioritySkill": "gaze" | "laugh" | "fist" | "judgment",
-  "patternSummary": "TỐI ĐA 5 TỪ VIẾT HOA TIẾNG VIỆT",
-  "taunt": "1 CÂU ĐỌC VỊ NGẮN NGẦU BẰNG TIẾNG VIỆT (DƯỚI 12 TỪ)"
-}`;
+  for (const model of models) {
+    const is25 = model.startsWith("gemini-2.5");
+    const genConfig: Record<string, unknown> = {
+      responseMimeType: "application/json",
+      maxOutputTokens: 256,
+      temperature: 0,
+      ...(is25 ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    };
 
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`,
+    const res = await callGeminiOnce(
+      key,
+      model,
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.35,
-            maxOutputTokens: 220,
-          },
-        }),
-      }
+        contents: [{ parts: [{ text: 'Trả về JSON: {"ok":true,"predictedNextLane":1,"laneProbs":[0.3,0.4,0.3]}' }] }],
+        generationConfig: genConfig,
+      },
+      9000
     );
 
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) return null;
+    if (res.ok) {
+      const parsed = extractJson(res.text);
+      if (parsed) {
+        setGeminiDiag({
+          status: "ready",
+          lastError: null,
+          lastModel: model,
+          lastLatencyMs: res.latencyMs,
+        });
+        return {
+          ok: true,
+          model,
+          latencyMs: res.latencyMs,
+          message: `Kết nối ${model} thành công (${res.latencyMs}ms)!`,
+        };
+      }
+      lastErr = `${model}: JSON không hợp lệ (${res.text.slice(0, 60)})`;
+    } else {
+      lastErr = `${model}: ${res.error}`;
+      // Nếu lỗi xác thực API Key (400/401/403) không cần thử thêm model khác trừ khi là lỗi thinkingConfig
+      if ((res.status === 401 || res.status === 403) && !res.error.toLowerCase().includes("thinking")) {
+        break;
+      }
+    }
+  }
 
-    const parsed = JSON.parse(rawText) as Record<string, unknown>;
+  setGeminiDiag({ status: "error", lastError: lastErr });
+  return { ok: false, message: lastErr };
+}
+
+export async function analyzeWithGemini(
+  payload: TelemetryPayload
+): Promise<{ tactic: GeminiTactic | null; error?: string; rateLimited?: boolean }> {
+  const key = getGeminiApiKey();
+  if (!key) return { tactic: null, error: "Chưa có API Key" };
+
+  const laneText = payload.moveHistory
+    .slice(-14)
+    .map((l) => (l === 0 ? "T" : l === 1 ? "G" : "P"))
+    .join("→");
+
+  const prompt = `Bạn là lõi AI chiến thuật "Tượng Thần Mỉm Cười" (Solo Leveling). Phân tích hành vi người chơi để đọc vị bước né tiếp theo.
+Dữ liệu:
+- Làn hiện tại: ${payload.currentLane} (0=TRÁI/T, 1=GIỮA/G, 2=PHẢI/P) | Pha: ${payload.stage}/3
+- Chiêu Boss vừa tung: ${payload.lastSkill ?? "chưa có"} | Số mẫu: ${payload.samples} | Độ chuẩn ML cục bộ: ${payload.accuracy}%
+- Chuỗi di chuyển gần nhất: ${laneText || "ít di chuyển"}
+- Tần suất 3 làn [T,G,P]: [${payload.laneCounts.map((n) => n.toFixed(1)).join(",")}]
+- Xác suất ML cục bộ [0,1,2]: [${payload.mlProbs.map((p) => p.toFixed(2)).join(",")}]
+- Phản xạ TB: ${Math.round(payload.avgReactionMs)}ms
+- Trúng đòn theo chiêu: gaze=${payload.skillStats.gaze.fails}/${payload.skillStats.gaze.attempts}, laugh=${payload.skillStats.laugh.fails}/${payload.skillStats.laugh.attempts}, fist=${payload.skillStats.fist.fails}/${payload.skillStats.fist.attempts}, judgment=${payload.skillStats.judgment.fails}/${payload.skillStats.judgment.attempts}
+
+Chỉ trả về JSON thuần hợp lệ đúng schema:
+{"predictedNextLane":0,"laneProbs":[0.6,0.25,0.15],"prioritySkill":"gaze","patternSummary":"TỐI ĐA 5 TỪ HOA","taunt":"1 câu đọc vị ngầu dưới 12 từ"}`;
+
+  const models = getCandidateModels();
+  let lastError = "Không nhận được phản hồi";
+  let rateLimited = false;
+
+  for (const model of models) {
+    const is25 = model.startsWith("gemini-2.5");
+    const genConfig: Record<string, unknown> = {
+      responseMimeType: "application/json",
+      temperature: 0.3,
+      maxOutputTokens: 512,
+      ...(is25 ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    };
+
+    const res = await callGeminiOnce(
+      key,
+      model,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: genConfig,
+      },
+      12000
+    );
+
+    if (!res.ok) {
+      lastError = `${model}: ${res.error}`;
+      if (res.status === 429) {
+        rateLimited = true;
+        continue; // thử model kế tiếp (vd 2.5-flash-lite / 2.0-flash có quota riêng!)
+      }
+      if (res.status === 401 || res.status === 403) {
+        break;
+      }
+      continue;
+    }
+
+    const parsed = extractJson(res.text);
+    if (!parsed) {
+      lastError = `${model}: JSON bị lỗi định dạng`;
+      continue;
+    }
+
     const predictedNextLane = clampLane(parsed.predictedNextLane, payload.currentLane);
     const laneProbs = normalizeProbs(parsed.laneProbs, payload.mlProbs);
     const prioritySkill = normalizeSkill(parsed.prioritySkill);
@@ -175,17 +352,31 @@ Trả về JSON thuần theo đúng schema:
         ? parsed.taunt.trim().slice(0, 90)
         : "";
 
-    return {
+    const tactic: GeminiTactic = {
       predictedNextLane,
       laneProbs,
       prioritySkill,
       patternSummary,
       taunt,
+      modelUsed: model,
+      latencyMs: res.latencyMs,
       updatedAt: Date.now(),
     };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+
+    setGeminiDiag({
+      status: "active",
+      lastError: null,
+      lastModel: model,
+      lastLatencyMs: res.latencyMs,
+      successCount: diagState.successCount + 1,
+    });
+
+    return { tactic };
   }
+
+  setGeminiDiag({
+    status: "error",
+    lastError,
+  });
+  return { tactic: null, error: lastError, rateLimited };
 }

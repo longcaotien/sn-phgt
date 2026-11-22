@@ -1,7 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { resetBossML } from "./chapter2/bossAI";
-import { getGeminiApiKey, hasGeminiApiKey, setGeminiApiKey, testGeminiConnection } from "./chapter2/geminiAI";
+import {
+  GEMINI_MODELS,
+  getGeminiApiKey,
+  getGeminiDiag,
+  getGeminiModelChoice,
+  hasGeminiApiKey,
+  setGeminiApiKey,
+  setGeminiModelChoice,
+  testGeminiConnection,
+  type GeminiModelChoice,
+} from "./chapter2/geminiAI";
 
 export type DevTarget =
   | { chapter: 1; boot?: boolean }
@@ -25,10 +35,25 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
   const [resetNote, setResetNote] = useState(false);
 
   const [apiKeyInput, setApiKeyInput] = useState(() => getGeminiApiKey());
+  const [modelChoice, setModelChoice] = useState<GeminiModelChoice>(() => getGeminiModelChoice());
   const [showKey, setShowKey] = useState(false);
   const [keyActive, setKeyActive] = useState(() => hasGeminiApiKey());
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [diag, setDiag] = useState(() => getGeminiDiag());
+
+  useEffect(() => {
+    const sync = () => {
+      setDiag(getGeminiDiag());
+      setKeyActive(hasGeminiApiKey());
+    };
+    window.addEventListener("sl-gemini-diag-changed", sync);
+    window.addEventListener("sl-gemini-key-changed", sync);
+    return () => {
+      window.removeEventListener("sl-gemini-diag-changed", sync);
+      window.removeEventListener("sl-gemini-key-changed", sync);
+    };
+  }, []);
 
   const handleReset = () => {
     resetBossML();
@@ -39,6 +64,7 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
   const handleSaveAndTest = async () => {
     const trimmed = apiKeyInput.trim();
     setGeminiApiKey(trimmed);
+    setGeminiModelChoice(modelChoice);
     setKeyActive(hasGeminiApiKey());
     window.dispatchEvent(new Event("sl-gemini-key-changed"));
     if (!trimmed) {
@@ -121,7 +147,7 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.94 }}
             transition={{ duration: 0.18 }}
-            className="sys-panel sys-cut mb-2 w-72 p-1 sm:w-80"
+            className="sys-panel sys-cut mb-2 w-72 p-1 sm:w-84"
           >
             <div className="border border-cyan-400/30 p-3">
               <div className="mb-2 flex items-center justify-between font-sys text-[9px] tracking-[0.22em] text-cyan-300">
@@ -130,9 +156,9 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
                   ✕
                 </button>
               </div>
-              <p className="mb-2.5 text-[11px] leading-relaxed text-sky-100/75">
-                Nhập <strong>Gemini API Key</strong> để kết hợp phân tích chiến thuật của{" "}
-                <span className="text-cyan-300">Gemini 2.5 Flash</span> với mô hình Online ML cục bộ.
+              <p className="mb-2 text-[11px] leading-relaxed text-sky-100/75">
+                Nhập <strong>Gemini API Key</strong> để kết hợp chiến thuật Gemini cùng{" "}
+                <span className="text-cyan-300">Online ML + Markov</span> (tự chuyển model nếu 429/limit).
               </p>
 
               <div className="flex items-center gap-1">
@@ -152,6 +178,26 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
                 >
                   {showKey ? "ẨN" : "HIỆN"}
                 </button>
+              </div>
+
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="font-sys text-[8px] tracking-[0.16em] text-cyan-200/70">MODEL</span>
+                <select
+                  value={modelChoice}
+                  onChange={(e) => {
+                    const m = e.target.value as GeminiModelChoice;
+                    setModelChoice(m);
+                    setGeminiModelChoice(m);
+                  }}
+                  className="min-w-0 flex-1 border border-cyan-500/35 bg-[#020814] px-2 py-1 font-mono text-[10px] text-cyan-100 focus:border-cyan-300 focus:outline-none"
+                >
+                  <option value="auto">Tự động (2.5 Flash → Lite → 2.0)</option>
+                  {GEMINI_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="mt-2 flex gap-1.5">
@@ -185,8 +231,28 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
                 </div>
               )}
 
-              <div className="mt-2 text-[9px] leading-tight text-sky-200/45">
-                Key chỉ lưu cục bộ trong <code>localStorage</code> của trình duyệt này, không gửi về server khác ngoài Google Gemini API.
+              {/* Chẩn đoán trực tiếp khi đang đánh Boss */}
+              <div className="mt-2 border border-sky-500/20 bg-[#020712]/80 px-2 py-1.5 text-[9.5px] text-sky-200/75">
+                <div className="flex items-center justify-between font-sys text-[7.5px] tracking-[0.16em] text-cyan-300/80">
+                  <span>TRẠNG THÁI TRONG TRẬN</span>
+                  <span>
+                    {diag.lastModel ? `${diag.lastModel} · ${diag.lastLatencyMs ?? 0}ms` : diag.status.toUpperCase()}
+                  </span>
+                </div>
+                {diag.successCount > 0 && (
+                  <div className="mt-0.5 text-emerald-300/90">
+                    ✔ Đã phân tích chiến thuật thành công {diag.successCount} lượt.
+                  </div>
+                )}
+                {diag.lastError && (
+                  <div className="mt-0.5 break-words text-red-300/90">
+                    ✕ Lỗi gần nhất: {diag.lastError}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-1.5 text-[9px] leading-tight text-sky-200/45">
+                Key chỉ lưu cục bộ trong <code>localStorage</code> trình duyệt này.
               </div>
             </div>
           </motion.div>
@@ -205,13 +271,23 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
         <button
           onClick={() => setPanel((p) => (p === "gemini" ? "none" : "gemini"))}
           className={`flex items-center gap-1.5 border px-2.5 py-1.5 font-sys text-[8px] tracking-[0.2em] backdrop-blur-md transition hover:opacity-100 sm:text-[9px] ${
-            keyActive
+            diag.status === "error"
+              ? "border-red-400/65 bg-red-950/75 text-red-100 opacity-95"
+              : keyActive
               ? "border-cyan-400/65 bg-cyan-950/75 text-cyan-100 opacity-90 shadow-[0_0_14px_rgba(34,211,238,0.3)]"
               : "border-cyan-500/35 bg-[#040a18]/80 text-cyan-200/75 opacity-80 hover:border-cyan-300"
           }`}
         >
-          <span className={`h-1.5 w-1.5 rounded-full ${keyActive ? "bg-cyan-300 shadow-[0_0_6px_#22d3ee]" : "bg-slate-400"}`} />
-          <span>GEMINI KEY</span>
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              diag.status === "error"
+                ? "bg-red-400"
+                : keyActive
+                ? "bg-cyan-300 shadow-[0_0_6px_#22d3ee]"
+                : "bg-slate-400"
+            }`}
+          />
+          <span>{diag.status === "error" ? "GEMINI LỖI" : "GEMINI KEY"}</span>
         </button>
       </div>
     </div>
