@@ -5,7 +5,7 @@ import Countdown from "./Countdown";
 import PortalGateCard, { GoldenKeyIcon } from "./PortalGate";
 import jinwoo from "../assets/jinwoo.jpg";
 import bg from "../assets/bg.jpg";
-import natureBg from "../assets/birthday-nature.webp";
+import natureBg from "../assets/birthday-scene-bg.webp";
 import { bossIdle } from "./chapter2/assets";
 
 const STATS = [
