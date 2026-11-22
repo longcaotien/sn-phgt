@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import RainCanvas from "../RainCanvas";
+import { GoldenKeyIcon } from "../PortalGate";
 import Statue, { type Attack, type Gaze } from "./Statue";
 import BossFight, { BOSS_MAX_HP, type BossStats } from "./BossFight";
 import { PlayerBehaviorTracker, type PredictionSnapshot } from "./bossAI";
@@ -25,6 +26,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 type Props = {
   onExit: () => void;
+  onCollectKey?: () => void;
   initialPhase?: Phase;
   initialWave?: number;
   initialBossHp?: number;
@@ -32,6 +34,7 @@ type Props = {
 
 export default function Chapter2({
   onExit,
+  onCollectKey,
   initialPhase = "title",
   initialWave = 0,
   initialBossHp = BOSS_MAX_HP,
@@ -1195,32 +1198,42 @@ export default function Chapter2({
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 1.2, duration: 0.7 }}
-                  className="mt-4 rounded border border-violet-400/40 bg-gradient-to-b from-violet-950/40 to-fuchsia-950/20 p-4"
+                  className="mt-4 rounded border border-amber-300/50 bg-gradient-to-b from-amber-950/45 via-amber-900/20 to-emerald-950/30 p-4 shadow-[0_0_28px_rgba(251,191,36,0.2)]"
                 >
-                  <div className="font-sys text-[10px] tracking-[0.3em] text-violet-300">[ PHẦN THƯỞNG SINH NHẬT ]</div>
-                  <p className="mt-2 text-base font-bold text-white sm:text-lg">
-                    Chúc mừng sinh nhật <span className="title-grad font-sys">Phạm Hoàng Gia Trí</span> 🎂
-                  </p>
-                  <p className="mt-2 text-[13px] leading-relaxed text-sky-100/80 sm:text-sm">
-                    <b className="text-sky-300">30/11</b> – bạn đã đi qua cả ba tượng thần, sống sót qua {TOTAL_WAVES} đợt trừng phạt và
-                    hạ gục kẻ canh giữ tầng sâu nhất. Chúc tuổi mới thật mạnh mẽ, bản lĩnh, luôn đứng dậy sau mỗi lần gục ngã và để mọi
-                    mục tiêu đều được <b className="text-violet-300">ARISE</b>.
-                  </p>
+                  <div className="font-sys text-[9px] tracking-[0.3em] text-amber-300">[ VẬT PHẨM RƠI TỪ BOSS ]</div>
+                  <div className="mt-2.5 flex items-center justify-center gap-3">
+                    <motion.div
+                      animate={{ rotate: [-6, 6, -6], y: [0, -5, 0] }}
+                      transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                      className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-amber-300/70 bg-amber-500/15 shadow-[0_0_24px_rgba(251,191,36,0.6)]"
+                    >
+                      <GoldenKeyIcon className="h-9 w-9" />
+                    </motion.div>
+                    <div className="text-left">
+                      <div className="font-sys text-sm font-black tracking-[0.08em] text-amber-200 sm:text-base">
+                        CHÌA KHÓA THẾ GIỚI 30/11
+                      </div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-amber-100/80">
+                        Dùng để mở <b className="text-white">Cánh Cổng Đóng</b> tại sảnh chính và bước vào thế giới sinh nhật{" "}
+                        <b className="text-amber-200">Phạm Hoàng Gia Trí</b>.
+                      </p>
+                    </div>
+                  </div>
                 </motion.div>
 
                 <div className="mt-5 flex flex-col gap-2.5 sm:flex-row">
                   <button
-                    onClick={replay}
-                    className="group relative flex-1 overflow-hidden border border-sky-400 bg-sky-500/20 py-3 font-sys text-xs font-bold tracking-[0.3em] text-white transition hover:bg-sky-500/40 hover:shadow-[0_0_30px_rgba(79,168,255,.6)] active:scale-95"
+                    onClick={() => (onCollectKey ? onCollectKey() : onExit())}
+                    className="group relative flex-1 overflow-hidden border border-amber-300 bg-gradient-to-r from-amber-500/30 to-emerald-500/25 py-3 font-sys text-xs font-bold tracking-[0.22em] text-amber-100 transition hover:from-amber-500/45 hover:to-emerald-500/40 hover:shadow-[0_0_32px_rgba(251,191,36,0.65)] active:scale-95"
                   >
-                    <span className="relative z-10">CHƠI LẠI</span>
-                    <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-sky-200/40 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+                    <span className="relative z-10">✦ NHẶT CHÌA KHÓA &amp; VỀ SẢNH</span>
+                    <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-amber-200/40 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
                   </button>
                   <button
-                    onClick={onExit}
-                    className="flex-1 border border-violet-400/70 bg-violet-950/40 py-3 font-sys text-xs font-bold tracking-[0.3em] text-white transition hover:bg-violet-700/40 active:scale-95"
+                    onClick={replay}
+                    className="border border-sky-400/70 bg-sky-950/50 px-5 py-3 font-sys text-xs font-bold tracking-[0.26em] text-white transition hover:bg-sky-800/50 active:scale-95"
                   >
-                    VỀ TRANG ĐẦU
+                    CHƠI LẠI
                   </button>
                 </div>
 

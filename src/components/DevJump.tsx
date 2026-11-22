@@ -14,12 +14,14 @@ import {
 } from "./chapter2/geminiAI";
 
 export type DevTarget =
-  | { chapter: 1; boot?: boolean }
-  | { chapter: 2; phase: "title" | "quest" | "pray" | "dodge" | "boss" | "clear"; wave?: number; bossHp?: number };
+  | { chapter: 1; boot?: boolean; hasKey?: boolean }
+  | { chapter: 2; phase: "title" | "quest" | "pray" | "dodge" | "boss" | "clear"; wave?: number; bossHp?: number }
+  | { chapter: "birthday"; stage?: "celebrate" | "ending" };
 
-const ITEMS: { label: string; tag: string; target: DevTarget; danger?: boolean }[] = [
+const ITEMS: { label: string; tag: string; target: DevTarget; danger?: boolean; warm?: boolean }[] = [
   { label: "Boot Hệ Thống", tag: "CH.1", target: { chapter: 1, boot: true } },
-  { label: "Màn Chính · Hero", tag: "CH.1", target: { chapter: 1, boot: false } },
+  { label: "Màn Chính · Hero", tag: "CH.1", target: { chapter: 1, boot: false, hasKey: false } },
+  { label: "Sảnh · Có Chìa Khóa (Mở Cổng)", tag: "KEY", target: { chapter: 1, boot: false, hasKey: true }, warm: true },
   { label: "Bảng Nhiệm Vụ", tag: "CH.2", target: { chapter: 2, phase: "quest" } },
   { label: "Cầu Nguyện", tag: "CH.2", target: { chapter: 2, phase: "pray" } },
   { label: "Né Tượng · Đợt 1", tag: "CH.2", target: { chapter: 2, phase: "dodge", wave: 0 } },
@@ -27,7 +29,9 @@ const ITEMS: { label: string; tag: string; target: DevTarget; danger?: boolean }
   { label: "Boss Cuối · Pha 1 (360 HP)", tag: "BOSS", target: { chapter: 2, phase: "boss", bossHp: 360 }, danger: true },
   { label: "Boss Cuối · Pha 2 Cuồng Nộ", tag: "BOSS", target: { chapter: 2, phase: "boss", bossHp: 240 }, danger: true },
   { label: "Boss Cuối · Pha 3 Tử Thần", tag: "BOSS", target: { chapter: 2, phase: "boss", bossHp: 120 }, danger: true },
-  { label: "Màn Chiến Thắng / Thưởng", tag: "WIN", target: { chapter: 2, phase: "clear" } },
+  { label: "Rơi Chìa Khóa (Thắng Boss)", tag: "WIN", target: { chapter: 2, phase: "clear" } },
+  { label: "Thế Giới Sinh Nhật (30/11)", tag: "30/11", target: { chapter: "birthday", stage: "celebrate" }, warm: true },
+  { label: "Kết · Hộp Nhạc & Bong Bóng", tag: "30/11", target: { chapter: "birthday", stage: "ending" }, warm: true },
 ];
 
 export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) {
@@ -116,13 +120,15 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
                     className={`flex w-full items-center justify-between border px-2.5 py-1.5 text-left text-[11px] transition active:scale-[0.98] ${
                       item.danger
                         ? "border-red-500/35 bg-red-950/35 text-red-100 hover:border-red-400 hover:bg-red-900/45"
+                        : item.warm
+                        ? "border-amber-400/40 bg-amber-950/35 text-amber-100 hover:border-amber-300 hover:bg-amber-900/45"
                         : "border-sky-500/25 bg-sky-950/40 text-sky-100 hover:border-sky-400 hover:bg-sky-900/50"
                     }`}
                   >
                     <span className="truncate font-medium">{item.label}</span>
                     <span
                       className={`ml-2 shrink-0 font-sys text-[8px] tracking-[0.18em] ${
-                        item.danger ? "text-red-300" : "text-sky-300/80"
+                        item.danger ? "text-red-300" : item.warm ? "text-amber-300" : "text-sky-300/80"
                       }`}
                     >
                       {item.tag}

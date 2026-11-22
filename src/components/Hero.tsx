@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import RainCanvas from "./RainCanvas";
 import Countdown from "./Countdown";
+import PortalGateCard, { GoldenKeyIcon } from "./PortalGate";
 import jinwoo from "../assets/jinwoo.jpg";
 import bg from "../assets/bg.jpg";
+import natureBg from "../assets/birthday-nature.webp";
 import { bossIdle } from "./chapter2/assets";
 
 const STATS = [
@@ -14,7 +16,15 @@ const STATS = [
   { k: "CẢM NHẬN", v: 100 },
 ];
 
-export default function Hero({ onNext }: { onNext?: () => void }) {
+export default function Hero({
+  hasKey = false,
+  onNext,
+  onOpenGate,
+}: {
+  hasKey?: boolean;
+  onNext?: () => void;
+  onOpenGate?: () => void;
+}) {
   // ---- Parallax theo chuột / cảm ứng ----
   const mx = useMotionValue(0);
   const my = useMotionValue(0);
@@ -53,6 +63,9 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
   // ---- ARISE ----
   const [arise, setArise] = useState(false);
   const [done, setDone] = useState(false);
+  const [lockedShake, setLockedShake] = useState(0);
+  const [lockNotice, setLockNotice] = useState(false);
+  const [openingGate, setOpeningGate] = useState(false);
   const soldiers = useMemo(
     () =>
       Array.from({ length: 46 }, (_, i) => {
@@ -63,7 +76,7 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
     []
   );
   const triggerArise = () => {
-    if (arise) return;
+    if (arise || openingGate) return;
     setArise(true);
     setBolt((b) => b + 1);
     setTimeout(() => {
@@ -71,6 +84,20 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
       setDone(true);
       onNext?.();
     }, 3200);
+  };
+
+  const handlePortalClick = () => {
+    if (arise || openingGate) return;
+    if (!hasKey) {
+      setLockedShake((s) => s + 1);
+      setLockNotice(true);
+      setTimeout(() => setLockNotice(false), 2600);
+      return;
+    }
+    setOpeningGate(true);
+    setTimeout(() => {
+      onOpenGate?.();
+    }, 2400);
   };
 
   const container = {
@@ -296,27 +323,39 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
           <Countdown />
         </motion.div>
 
-        <motion.div variants={item} className="mt-6 flex items-center gap-4">
+        <motion.div variants={item} className="mt-5 flex flex-wrap items-center gap-3">
           <button
             onClick={triggerArise}
-            className="group relative overflow-hidden border border-violet-400/70 bg-violet-950/50 px-8 py-3 font-sys text-sm font-bold tracking-[0.4em] text-white transition hover:scale-105 hover:bg-violet-800/50 hover:shadow-[0_0_40px_rgba(139,61,255,0.8)] active:scale-95"
+            className="group relative overflow-hidden border border-violet-400/70 bg-violet-950/50 px-7 py-3 font-sys text-sm font-bold tracking-[0.4em] text-white transition hover:scale-105 hover:bg-violet-800/50 hover:shadow-[0_0_40px_rgba(139,61,255,0.8)] active:scale-95"
           >
             <span className="relative z-10 text-glow-purple">ARISE</span>
             <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-violet-300/40 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
           </button>
-          <AnimatePresence>
-            {done && (
-              <motion.span
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="font-sys text-[10px] leading-5 tracking-[0.2em] text-sky-300"
-              >
-                ✔ ĐÃ TRIỆU HỒI BÓNG TỐI<br />
-                <span className="text-sky-100/60">Chương tiếp theo đang tải...</span>
-              </motion.span>
-            )}
-          </AnimatePresence>
+
+          <PortalGateCard hasKey={hasKey} onClick={handlePortalClick} lockedShake={lockedShake} />
         </motion.div>
+
+        <AnimatePresence>
+          {lockNotice && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="mt-2 font-sys text-[9px] tracking-[0.18em] text-amber-300"
+            >
+              🔒 CỔNG ĐANG PHONG ẤN · HÃY HẠ BOSS CHƯƠNG II ĐỂ NHẬN CHÌA KHÓA!
+            </motion.div>
+          )}
+          {done && (
+            <motion.span
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="mt-2 font-sys text-[10px] leading-5 tracking-[0.2em] text-sky-300"
+            >
+              ✔ ĐÃ TRIỆU HỒI BÓNG TỐI · Chương tiếp theo đang tải...
+            </motion.span>
+          )}
+        </AnimatePresence>
 
         <motion.div variants={item} className="mt-4 flex items-center gap-2 overflow-hidden sm:gap-3">
           <span className="h-px w-5 shrink-0 bg-sky-500/60 sm:w-6" />
@@ -329,6 +368,79 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
           </span>
         </motion.div>
       </motion.section>
+
+      {/* Cutscene Tra Chìa Khóa Mở Cánh Cổng 30/11 */}
+      <AnimatePresence>
+        {openingGate && (
+          <motion.div
+            key="gate-cutscene"
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-[#040710]/95"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.45 }}
+          >
+            {/* Thế giới thiên nhiên rực sáng ẩn sau cánh cổng */}
+            <motion.img
+              src={natureBg}
+              alt=""
+              initial={{ scale: 1.2, opacity: 0 }}
+              animate={{ scale: 1.03, opacity: 1 }}
+              transition={{ delay: 0.9, duration: 1.4, ease: "easeOut" }}
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+
+            {/* Khung Cổng Vòm lớn với 2 cánh trượt mở ra 2 bên */}
+            <div className="relative z-10 flex h-80 w-64 overflow-hidden rounded-t-full border-4 border-amber-300/80 shadow-[0_0_80px_rgba(251,191,36,0.65)] sm:h-96 sm:w-80">
+              {/* Cánh trái */}
+              <motion.div
+                initial={{ x: "0%" }}
+                animate={{ x: "-100%" }}
+                transition={{ delay: 1.05, duration: 1.15, ease: [0.22, 1, 0.36, 1] }}
+                className="h-full w-1/2 border-r border-amber-300/50 bg-gradient-to-br from-[#172033] via-[#0b101d] to-[#050811]"
+              />
+              {/* Cánh phải */}
+              <motion.div
+                initial={{ x: "0%" }}
+                animate={{ x: "100%" }}
+                transition={{ delay: 1.05, duration: 1.15, ease: [0.22, 1, 0.36, 1] }}
+                className="h-full w-1/2 border-l border-amber-300/50 bg-gradient-to-bl from-[#172033] via-[#0b101d] to-[#050811]"
+              />
+
+              {/* Chìa khóa bay vào ổ khóa & xoay sáng */}
+              <motion.div
+                initial={{ y: 90, scale: 1.6, opacity: 0, rotate: -30 }}
+                animate={{
+                  y: [90, 0, 0],
+                  scale: [1.5, 1.15, 0.2],
+                  opacity: [0, 1, 0],
+                  rotate: [-30, 0, 90],
+                }}
+                transition={{ duration: 1.15, times: [0, 0.55, 1], ease: "easeInOut" }}
+                className="pointer-events-none absolute inset-0 flex items-center justify-center"
+              >
+                <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-amber-300 bg-amber-400/20 shadow-[0_0_40px_#fcd34d]">
+                  <GoldenKeyIcon className="h-12 w-12" />
+                </div>
+              </motion.div>
+            </div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35, duration: 0.6 }}
+              className="relative z-10 mt-6 text-center"
+            >
+              <div className="font-sys text-xs tracking-[0.35em] text-amber-200 drop-shadow">
+                ĐANG MỞ CÁNH CỔNG 30/11…
+              </div>
+              <div className="mt-1 text-sm text-amber-100/85 drop-shadow">
+                Bước vào Thế Giới Sinh Nhật Phạm Hoàng Gia Trí
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Hiệu ứng ARISE toàn màn hình */}
       <AnimatePresence>
