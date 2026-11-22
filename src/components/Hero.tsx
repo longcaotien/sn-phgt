@@ -208,8 +208,8 @@ export default function Hero({ onNext }: { onNext?: () => void }) {
             <img
               src={bossIdle}
               alt=""
-              className="h-24 w-full object-cover object-top opacity-70 transition-transform duration-1000 hover:scale-110"
-              style={{ mixBlendMode: "screen", filter: "saturate(.55) contrast(1.05)" }}
+              className="h-24 w-full object-cover object-[50%_28%] opacity-75 transition-transform duration-1000 hover:scale-110"
+              style={{ mixBlendMode: "screen", filter: "saturate(.75) contrast(1.08)" }}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0a0308] via-[#0a0308]/40 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 p-2">

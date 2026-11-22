@@ -3,38 +3,23 @@ import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import RainCanvas from "../RainCanvas";
 import Statue, { type Attack, type Gaze } from "./Statue";
 import BossFight, { BOSS_MAX_HP, type BossStats } from "./BossFight";
+import { PlayerBehaviorTracker, type PredictionSnapshot } from "./bossAI";
 import { avatar, bossIdle, hall, heroKneel, heroStand, s1, s2, s3 } from "./assets";
 
 type Phase = "title" | "quest" | "pray" | "awaken" | "dodge" | "boss" | "dead" | "clear";
-type Threat = { lanes: number[]; mode: "warn" | "strike"; id: number };
-type Pop = { id: number; text: string; kind: "perfect" | "dodge" | "hit" };
+type Threat = { lanes: number[]; mode: "warn" | "strike"; id: number; aiLocked?: boolean };
+type Pop = { id: number; text: string; kind: "perfect" | "dodge" | "hit" | "warn" };
 
 const MAX_HP = 3;
 const TOTAL_WAVES = 12;
 const LANE_X = [17, 50, 83];
+const LANE_NAMES = ["TRÁI", "GIỮA", "PHẢI"];
 
 const STATUES = [
   { src: s1, x: 17, eye: [54, 6.5] as [number, number], bottom: "33%", height: "min(58svh, 62vw)" },
   { src: s2, x: 50, eye: [50, 8.5] as [number, number], bottom: "35%", height: "min(52svh, 58vw)" },
   { src: s3, x: 83, eye: [49, 10] as [number, number], bottom: "33%", height: "min(58svh, 62vw)" },
 ];
-
-const SINGLES = [[0], [1], [2]];
-const DOUBLES = [
-  [0, 1],
-  [1, 2],
-  [0, 2],
-];
-
-function makePattern(i: number, prev: number[] | null): number[] {
-  const pool = i < 3 ? SINGLES : i >= 9 ? [...DOUBLES, ...DOUBLES, ...SINGLES] : [...SINGLES, ...DOUBLES];
-  let p = pool[Math.floor(Math.random() * pool.length)];
-  let guard = 0;
-  while (prev && JSON.stringify(prev) === JSON.stringify(p) && guard++ < 8) {
-    p = pool[Math.floor(Math.random() * pool.length)];
-  }
-  return p;
-}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -53,12 +38,17 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   const [perfects, setPerfects] = useState(0);
   const [pop, setPop] = useState<Pop | null>(null);
   const [ghosts, setGhosts] = useState<{ id: number; lane: number }[]>([]);
-  const [shakeKey, setShakeKey] = useState(0);
   const [strikeKey, setStrikeKey] = useState(0);
   const [hitKey, setHitKey] = useState(0);
   const [runId, setRunId] = useState(0);
   const [bossRun, setBossRun] = useState(0);
   const [bossStats, setBossStats] = useState<BossStats | null>(null);
+  const [dodgePred, setDodgePred] = useState<PredictionSnapshot>({
+    predictedLane: 1,
+    confidence: 0.35,
+    reason: "ĐANG QUÉT MẪU DI CHUYỂN…",
+    adaptRate: 35,
+  });
 
   const phaseRef = useRef<Phase>("title");
   const hpRef = useRef(MAX_HP);
@@ -66,12 +56,26 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   const holdRef = useRef(false);
   const threatRef = useRef<Threat | null>(null);
   const escapeRef = useRef(0);
+  const threatWarnAtRef = useRef(0);
+  const dodgeTrackerRef = useRef(new PlayerBehaviorTracker());
   const invulnRef = useRef(0);
   const deathFrom = useRef<"pray" | "dodge" | "boss">("pray");
   const bossProgressRef = useRef(BOSS_MAX_HP);
   const idRef = useRef(0);
   const popTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const tilt = useAnimationControls();
+  const sceneShake = useAnimationControls();
+
+  const triggerShake = useCallback(
+    (power = 11) => {
+      sceneShake.start({
+        x: [0, -power, power * 0.8, -power * 0.6, power * 0.35, 0],
+        y: [0, power * 0.55, -power * 0.65, power * 0.35, -power * 0.2, 0],
+        transition: { duration: 0.42, ease: "easeOut" },
+      });
+    },
+    [sceneShake]
+  );
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -90,9 +94,9 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     hpRef.current -= 1;
     setHp(hpRef.current);
     setHitKey((k) => k + 1);
-    setShakeKey((k) => k + 1);
+    triggerShake(13);
     return true;
-  }, []);
+  }, [triggerShake]);
 
   const setThreatBoth = (t: Threat | null) => {
     threatRef.current = t;
@@ -108,6 +112,9 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
       laneRef.current = n;
       setLane(n);
       const th = threatRef.current;
+      const reaction = threatWarnAtRef.current > 0 ? performance.now() - threatWarnAtRef.current : undefined;
+      dodgeTrackerRef.current.recordMove(old, n, reaction);
+      setDodgePred(dodgeTrackerRef.current.predict(n));
       if (th && th.mode === "warn" && th.lanes.includes(old) && !th.lanes.includes(n)) {
         escapeRef.current = performance.now();
       }
@@ -143,13 +150,13 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     let last = performance.now();
     let g = 0;
     setGauge(0);
-    let nextGaze = last + 2600;
+    let nextGaze = last + 2200;
     let gz: { statue: number; start: number; mode: "warn" | "on"; hit: boolean } | null = null;
 
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      g += (holdRef.current ? 24 : -15) * dt;
+      g += (holdRef.current ? 22 : -18) * dt;
       g = Math.max(0, Math.min(100, g));
       setGauge(g);
 
@@ -159,7 +166,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
       }
       if (gz) {
         const e = now - gz.start;
-        if (gz.mode === "warn" && e > 800) {
+        if (gz.mode === "warn" && e > 740) {
           gz.mode = "on";
           setGaze({ statue: gz.statue, mode: "on" });
         }
@@ -168,10 +175,10 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
             gz.hit = true;
             damage();
           }
-          if (e > 2100) {
+          if (e > 2050) {
             gz = null;
             setGaze(null);
-            nextGaze = now + 1400 + Math.random() * 1300;
+            nextGaze = now + (Math.random() < 0.35 ? 850 : 1350 + Math.random() * 1100);
           }
         }
       }
@@ -191,16 +198,17 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     if (phase !== "awaken") return;
     setAwake(true);
-    setShakeKey((k) => k + 1);
+    triggerShake(14);
     setStrikeKey((k) => k + 1);
     const t = setTimeout(() => setPhase("dodge"), 3400);
     return () => clearTimeout(t);
-  }, [phase]);
+  }, [phase, triggerShake]);
 
   // ---------- Né đòn ----------
   useEffect(() => {
     if (phase !== "dodge") return;
     let cancelled = false;
+    dodgeTrackerRef.current = new PlayerBehaviorTracker();
     laneRef.current = 1;
     setLane(1);
     setWave(0);
@@ -208,37 +216,61 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     setPerfects(0);
 
     (async () => {
-      await sleep(1000);
-      let prev: number[] | null = null;
+      await sleep(950);
       let perfectCount = 0;
       for (let i = 0; i < TOTAL_WAVES; i++) {
         if (cancelled) return;
         setWave(i + 1);
-        const warn = Math.max(760, 1350 - i * 55);
-        const lanes = makePattern(i, prev);
-        prev = lanes;
-        setThreatBoth({ lanes, mode: "warn", id: i });
-        await sleep(warn);
+        const warn = Math.max(690, 1220 - i * 48);
+        const count: 1 | 2 = i < 3 ? 1 : 2;
+        const adaptiveChance = i < 3 ? 0.35 : i < 7 ? 0.72 : 0.9;
+        const picked = dodgeTrackerRef.current.pickTargetedLanes(laneRef.current, count, adaptiveChance);
+        let lanes = picked.lanes;
+        setDodgePred(picked.predicted);
+        threatWarnAtRef.current = performance.now();
+        const aiLocked = i >= 3 && picked.predicted.confidence >= 0.45;
+        setThreatBoth({ lanes, mode: "warn", id: i, aiLocked });
+
+        // Đợt 9 & 11: tượng thần đọc vị bước né sớm và đổi hướng 1 lần (vẫn cho 560ms phản ứng)
+        if ((i === 8 || i === 10) && count === 2) {
+          await sleep(Math.round(warn * 0.55));
+          if (cancelled) return;
+          if (!lanes.includes(laneRef.current)) {
+            const retarget = dodgeTrackerRef.current.pickTargetedLanes(laneRef.current, 2, 0.92);
+            lanes = retarget.lanes;
+            setDodgePred(retarget.predicted);
+            threatWarnAtRef.current = performance.now();
+            setThreatBoth({ lanes, mode: "warn", id: i, aiLocked: true });
+            showPop("ĐỔI HƯỚNG!", "warn");
+            await sleep(580);
+          } else {
+            await sleep(Math.round(warn * 0.45));
+          }
+        } else {
+          await sleep(warn);
+        }
         if (cancelled) return;
 
-        const strike: Threat = { lanes, mode: "strike", id: i };
+        const strike: Threat = { lanes, mode: "strike", id: i, aiLocked };
         setThreatBoth(strike);
         setStrikeKey((k) => k + 1);
-        setShakeKey((k) => k + 1);
+        triggerShake(10);
         const hit = lanes.includes(laneRef.current);
         if (hit) {
           if (damage()) showPop("-1 HP", "hit");
         } else if (performance.now() - escapeRef.current < 520) {
           perfectCount++;
           setPerfects(perfectCount);
-          showPop("NÉ HOÀN HẢO!", "perfect");
+          showPop(aiLocked ? "PHÁ ĐỌC VỊ!" : "NÉ HOÀN HẢO!", "perfect");
         } else {
           showPop("NÉ!", "dodge");
         }
-        await sleep(480);
+        dodgeTrackerRef.current.recordStay(laneRef.current);
+        threatWarnAtRef.current = 0;
+        await sleep(460);
         if (cancelled) return;
         setThreatBoth(null);
-        await sleep(520);
+        await sleep(450);
       }
       if (!cancelled && hpRef.current > 0) setPhase("boss");
     })();
@@ -246,7 +278,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [phase, runId, damage, showPop]);
+  }, [phase, runId, damage, showPop, triggerShake]);
 
   // ---------- Chiến thắng ----------
   useEffect(() => {
@@ -255,10 +287,10 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     setAwake(false);
     setShattered(true);
     setStrikeKey((k) => k + 1);
-    setShakeKey((k) => k + 1);
+    triggerShake(16);
     const t = setTimeout(() => setReward(true), 2000);
     return () => clearTimeout(t);
-  }, [phase]);
+  }, [phase, triggerShake]);
 
   // ---------- Phím ----------
   useEffect(() => {
@@ -309,6 +341,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   }, []);
 
   const startPray = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     hpRef.current = MAX_HP;
     setHp(MAX_HP);
     holdRef.current = false;
@@ -318,6 +351,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   };
 
   const revive = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     hpRef.current = MAX_HP;
     invulnRef.current = performance.now() + 1200;
     setHp(MAX_HP);
@@ -358,7 +392,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
     if (phase === "pray") {
       if (gaze?.mode === "on") return { text: "ĐỪNG NGẨNG ĐẦU!", danger: true };
       if (gaze?.mode === "warn") return { text: "Có thứ gì đó… vừa cử động.", danger: false };
-      return { text: "「Hãy cầu nguyện. Kẻ nào ngẩng đầu sẽ bị trừng phạt.」", danger: false };
+      return { text: "“Hãy cầu nguyện. Kẻ nào ngẩng đầu sẽ bị trừng phạt.”", danger: false };
     }
     if (phase === "awaken") return { text: "Các tượng thần… đã thức tỉnh.", danger: true };
     if (phase === "dodge") return { text: "Né khỏi vùng đỏ trước khi tượng thần giáng đòn!", danger: false };
@@ -366,9 +400,9 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   }, [phase, gaze]);
 
   const rank = useMemo(() => {
-    const flawlessBoss = bossStats ? bossStats.misses === 0 : false;
-    if (hp >= MAX_HP && perfects >= 6 && flawlessBoss) return "S+";
-    if (hp >= MAX_HP && perfects >= 4) return "S";
+    const lowMiss = bossStats ? bossStats.misses <= 1 : false;
+    if (hp >= MAX_HP && perfects >= 5 && lowMiss) return "S+";
+    if (hp >= MAX_HP && perfects >= 3) return "S";
     if (hp >= 2) return "A";
     return "B";
   }, [hp, perfects, bossStats]);
@@ -392,7 +426,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
       animate={{ opacity: 1 }}
       transition={{ duration: 1 }}
     >
-      <div key={shakeKey} className={`absolute inset-0 ${shakeKey ? "shake" : ""}`}>
+      <motion.div className="absolute inset-0" animate={sceneShake}>
         {/* ======= Bối cảnh sảnh đền ======= */}
         <motion.div
           className="absolute left-1/2 top-1/2 aspect-video"
@@ -454,41 +488,71 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         {(phase === "dodge" || phase === "dead") &&
           [0, 1, 2].map((i) => {
             const st = threat && threat.lanes.includes(i) ? threat.mode : null;
+            const isPred = threat?.aiLocked && dodgePred.predictedLane === i;
             return (
               <div
                 key={i}
                 className="pointer-events-none absolute z-[5]"
-                style={{ left: `${LANE_X[i]}%`, top: "64%", bottom: 0, width: "30%", transform: "translateX(-50%)" }}
+                style={{ left: `${LANE_X[i]}%`, top: "32%", bottom: 0, width: "30%", transform: "translateX(-50%)" }}
               >
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    clipPath: "polygon(34% 0, 66% 0, 100% 100%, 0 100%)",
-                    background:
-                      st === "strike"
-                        ? "linear-gradient(to bottom, rgba(255,255,255,.95), rgba(255,120,60,.85) 40%, rgba(255,30,30,.5))"
-                        : st === "warn"
-                        ? "linear-gradient(to bottom, rgba(255,40,40,.15), rgba(255,40,40,.65))"
-                        : lane === i
-                        ? "linear-gradient(to bottom, rgba(90,160,255,.04), rgba(90,160,255,.2))"
-                        : "linear-gradient(to bottom, rgba(90,160,255,.0), rgba(90,160,255,.07))",
-                    transition: st === "strike" ? "none" : "background .25s",
-                  }}
-                />
-                {st === "warn" && (
+                {/* Cột tia trừng phạt từ trên xuống */}
+                {st === "strike" && (
                   <div
-                    className="lane-warn absolute inset-0"
+                    className="beam-strike absolute inset-x-[14%] top-0 bottom-[6%]"
                     style={{
-                      clipPath: "polygon(34% 0, 66% 0, 100% 100%, 0 100%)",
-                      boxShadow: "inset 0 0 50px rgba(255,0,0,.8)",
-                      background: "repeating-linear-gradient(to bottom, rgba(255,60,60,.25) 0 10px, transparent 10px 24px)",
+                      background:
+                        "linear-gradient(90deg, transparent, rgba(255,60,30,.55) 25%, rgba(255,220,160,.95) 50%, rgba(255,60,30,.55) 75%, transparent)",
+                      boxShadow: "0 0 50px rgba(255,70,30,.9)",
+                      filter: "blur(1px)",
                     }}
                   />
                 )}
+                {st === "warn" && (
+                  <div
+                    className="lane-warn absolute inset-x-[42%] top-0 bottom-[8%]"
+                    style={{
+                      background:
+                        "linear-gradient(to bottom, rgba(255,40,30,.15), rgba(255,70,40,.85))",
+                      boxShadow: "0 0 18px rgba(255,40,30,.7)",
+                    }}
+                  />
+                )}
+                {/* Khung làn dưới sàn */}
+                <div
+                  className="absolute inset-x-1 bottom-3 h-20 rounded-xl border transition-all duration-200"
+                  style={{
+                    borderColor:
+                      st === "strike"
+                        ? "rgba(255,190,110,.95)"
+                        : st === "warn"
+                        ? "rgba(255,65,45,.8)"
+                        : lane === i
+                        ? "rgba(79,168,255,.55)"
+                        : "rgba(79,168,255,.15)",
+                    background:
+                      st === "strike"
+                        ? "radial-gradient(ellipse at 50% 60%, rgba(255,110,50,.55), transparent 75%)"
+                        : st === "warn"
+                        ? "radial-gradient(ellipse at 50% 60%, rgba(255,40,30,.32), transparent 72%)"
+                        : lane === i
+                        ? "radial-gradient(ellipse at 50% 60%, rgba(79,168,255,.18), transparent 72%)"
+                        : "transparent",
+                    boxShadow:
+                      st === "warn"
+                        ? "0 0 28px rgba(255,40,20,.45), inset 0 0 22px rgba(255,40,20,.25)"
+                        : "none",
+                  }}
+                >
+                  {st === "warn" && (
+                    <div className="flex h-full items-center justify-center font-sys text-[8px] font-bold tracking-[0.22em] text-red-200">
+                      {isPred ? "BẮT BÀI!" : "NGUY HIỂM"}
+                    </div>
+                  )}
+                </div>
                 {st === "strike" && (
                   <div
                     key={`ring${threat?.id}`}
-                    className="ring absolute left-1/2 top-[2%] h-24 w-48 rounded-[50%] border-4 border-orange-200"
+                    className="ring absolute bottom-6 left-1/2 h-20 w-44 rounded-[50%] border-4 border-orange-200"
                     style={{ boxShadow: "0 0 40px 10px rgba(255,120,40,.9)" }}
                   />
                 )}
@@ -589,8 +653,8 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                 left: `${LANE_X[lane]}%`,
                 bottom: "36%",
                 x: "-50%",
-                color: pop.kind === "hit" ? "#ff5a5a" : pop.kind === "perfect" ? "#ffd86b" : "#7cc4ff",
-                textShadow: `0 0 16px ${pop.kind === "hit" ? "#f00" : pop.kind === "perfect" ? "#ffb300" : "#4fa8ff"}`,
+                color: pop.kind === "hit" ? "#ff5a5a" : pop.kind === "warn" ? "#e879f9" : pop.kind === "perfect" ? "#ffd86b" : "#7cc4ff",
+                textShadow: `0 0 16px ${pop.kind === "hit" ? "#f00" : pop.kind === "warn" ? "#c026d3" : pop.kind === "perfect" ? "#ffb300" : "#4fa8ff"}`,
               }}
               initial={{ opacity: 0, y: 10, scale: 0.6 }}
               animate={{ opacity: 1, y: -24, scale: 1 }}
@@ -605,7 +669,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         {/* tàn lửa + sương */}
         <RainCanvas rain={false} intensity={1} />
         <div className="mist pointer-events-none absolute -inset-x-20 bottom-0 h-1/3 bg-[radial-gradient(ellipse_at_center,rgba(120,140,255,0.16),transparent_65%)]" />
-      </div>
+      </motion.div>
 
       {/* ======= BOSS CUỐI ======= */}
       {(phase === "boss" || (phase === "dead" && deathFrom.current === "boss")) && (
@@ -680,13 +744,19 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
               <div className="font-sys text-[10px] tracking-[0.35em] text-red-300 sm:text-xs" style={{ textShadow: "0 0 12px #f33" }}>
                 ĐỢT {String(wave).padStart(2, "0")} / {TOTAL_WAVES}
               </div>
-              <div className="mx-auto mt-2 h-1 w-32 overflow-hidden rounded-full bg-white/10 sm:w-48">
+              <div className="mx-auto mt-1.5 h-1 w-32 overflow-hidden rounded-full bg-white/10 sm:w-48">
                 <motion.div
                   className="h-full bg-gradient-to-r from-red-500 to-orange-300"
                   animate={{ width: `${(wave / TOTAL_WAVES) * 100}%` }}
                   transition={{ duration: 0.5 }}
                 />
               </div>
+              {phase === "dodge" && wave >= 3 && (
+                <div className="mt-1 inline-flex items-center gap-1 rounded-sm border border-violet-400/35 bg-[#12061e]/80 px-2 py-0.5 font-sys text-[7px] tracking-[0.16em] text-violet-200">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
+                  <span>AI ĐỌC VỊ {dodgePred.adaptRate}% · [{LANE_NAMES[dodgePred.predictedLane]}]</span>
+                </div>
+              )}
             </div>
           )}
         </>
@@ -697,7 +767,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         {subtitle && phase !== "dead" && (
           <motion.div
             key={subtitle.text}
-            className="pointer-events-none absolute inset-x-0 top-[13%] z-40 px-6 text-center"
+            className="pointer-events-none absolute inset-x-0 top-[15.5%] z-40 px-6 text-center"
             initial={{ opacity: 0, y: 10, filter: "blur(6px)" }}
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             exit={{ opacity: 0 }}
@@ -786,11 +856,11 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
             <motion.img
               src={bossIdle}
               alt=""
-              className="pointer-events-none absolute inset-x-0 top-0 h-full w-full object-cover object-top opacity-[0.32]"
+              className="pointer-events-none absolute inset-x-0 top-0 h-full w-full object-cover object-[50%_26%] opacity-[0.42]"
               initial={{ scale: 1.4, opacity: 0 }}
-              animate={{ scale: 1.05, opacity: 0.32 }}
+              animate={{ scale: 1.05, opacity: 0.42 }}
               transition={{ duration: 4, ease: "easeOut" }}
-              style={{ mixBlendMode: "screen", filter: "saturate(.45) brightness(.85) blur(1px)" }}
+              style={{ mixBlendMode: "screen", filter: "saturate(.7) brightness(.95)" }}
             />
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_35%,rgba(255,40,20,0.22),transparent_60%)]" />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#04020a] via-[#04020a]/40 to-[#04020a]/80" />
@@ -869,14 +939,13 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
             key="quest"
             className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ delay: 2.8, duration: 0.8 }}
+            animate={{ opacity: 1, transition: { delay: 2.8, duration: 0.8 } }}
+            exit={{ opacity: 0, transition: { duration: 0.25 } }}
           >
             <motion.div
               initial={{ scaleY: 0.05, opacity: 0 }}
-              animate={{ scaleY: 1, opacity: 1 }}
-              transition={{ delay: 3, duration: 0.55, ease: [0.2, 0.9, 0.25, 1] }}
+              animate={{ scaleY: 1, opacity: 1, transition: { delay: 3, duration: 0.55, ease: [0.2, 0.9, 0.25, 1] } }}
+              exit={{ scaleY: 0.9, opacity: 0, transition: { duration: 0.2 } }}
               className="sys-panel w-full max-w-md p-1"
             >
               <div className="border border-sky-400/30 p-5 sm:p-7">
@@ -889,7 +958,7 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                   <img
                     src={bossIdle}
                     alt=""
-                    className="absolute inset-y-0 right-0 h-full w-2/5 object-cover object-top opacity-50"
+                    className="absolute inset-y-0 right-0 h-full w-2/5 object-cover object-[50%_28%] opacity-65"
                     style={{ mixBlendMode: "screen", maskImage: "linear-gradient(to right, transparent, #000 45%)" }}
                   />
                   <div className="relative p-3">
@@ -897,9 +966,10 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                     <div className="mt-1 font-sys text-sm font-black tracking-[0.14em] text-white" style={{ textShadow: "0 0 16px #f00" }}>
                       TƯỢNG THẦN MỈM CƯỜI
                     </div>
-                    <div className="mt-1 text-[10px] leading-relaxed text-red-100/65">
-                      3 thanh máu · 3 kỹ năng đặc biệt: <b className="text-red-300">Trừng Phạt</b>, <b className="text-amber-300">Cuồng Tiếng Cười</b>,{" "}
-                      <b className="text-pink-300">Nắm Đấm Thần</b>.
+                    <div className="mt-1 text-[10px] leading-relaxed text-red-100/70">
+                      3 thanh máu · <b className="text-violet-300">AI đọc vị di chuyển</b> · 4 kỹ năng:{" "}
+                      <b className="text-red-300">Trừng Phạt</b>, <b className="text-amber-300">Cuồng Tiếng Cười</b>,{" "}
+                      <b className="text-pink-300">Nắm Đấm Thần</b>, <b className="text-fuchsia-300">Phán Xét Kép</b>.
                     </div>
                   </div>
                 </div>
@@ -1043,18 +1113,20 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                   <img
                     src={bossIdle}
                     alt=""
-                    className="absolute -right-4 -top-3 h-24 w-24 object-cover opacity-30"
-                    style={{ mixBlendMode: "screen", filter: "saturate(.4)" }}
+                    className="absolute -right-2 -top-1 h-24 w-24 object-cover object-[50%_28%] opacity-40"
+                    style={{ mixBlendMode: "screen", filter: "saturate(.7)" }}
                   />
                   <div className="relative flex items-center gap-2">
                     <span className="font-sys text-[8px] tracking-[0.3em] text-red-300">BOSS ĐÃ BỊ ĐÁNH BẠI</span>
                     <span className="h-px flex-1 bg-gradient-to-r from-red-500/60 to-transparent" />
                   </div>
                   <div className="relative mt-1 font-sys text-sm font-black tracking-[0.12em] text-white" style={{ textShadow: "0 0 14px #ff3a20" }}>
-                    TƯỢNG THẦN MỈM NỤ CƯỜI
+                    TƯỢNG THẦN MỈM CƯỜI
                   </div>
-                  <div className="relative mt-1 font-sys text-[8px] tracking-[0.22em] text-red-200/70">
-                    {bossStats ? `${bossStats.counters} ĐÒN PHẢN CÔNG · COMBO CAO NHẤT ×${bossStats.bestCombo}` : "SẠCH BÓNG TỰ TRỌNG"}
+                  <div className="relative mt-1 font-sys text-[8px] tracking-[0.2em] text-red-200/75">
+                    {bossStats
+                      ? `${bossStats.counters} PHẢN CÔNG · ${bossStats.crits} CHÍ MẠNG · AI ĐỌC VỊ TỐI ĐA ${bossStats.maxAdapt}%`
+                      : "SẠCH BÓNG TỰ TRỌNG"}
                   </div>
                 </motion.div>
 
