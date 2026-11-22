@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { resetBossML } from "./chapter2/bossAI";
+import { getGeminiApiKey, hasGeminiApiKey, setGeminiApiKey, testGeminiConnection } from "./chapter2/geminiAI";
 
 export type DevTarget =
   | { chapter: 1; boot?: boolean }
@@ -20,8 +21,14 @@ const ITEMS: { label: string; tag: string; target: DevTarget; danger?: boolean }
 ];
 
 export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) {
-  const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<"none" | "dev" | "gemini">("none");
   const [resetNote, setResetNote] = useState(false);
+
+  const [apiKeyInput, setApiKeyInput] = useState(() => getGeminiApiKey());
+  const [showKey, setShowKey] = useState(false);
+  const [keyActive, setKeyActive] = useState(() => hasGeminiApiKey());
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const handleReset = () => {
     resetBossML();
@@ -29,11 +36,36 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
     setTimeout(() => setResetNote(false), 1600);
   };
 
+  const handleSaveAndTest = async () => {
+    const trimmed = apiKeyInput.trim();
+    setGeminiApiKey(trimmed);
+    setKeyActive(hasGeminiApiKey());
+    window.dispatchEvent(new Event("sl-gemini-key-changed"));
+    if (!trimmed) {
+      setTestMsg({ ok: false, text: "Đã xóa key — quay về chế độ Online ML thuần." });
+      return;
+    }
+    setTesting(true);
+    setTestMsg(null);
+    const res = await testGeminiConnection(trimmed);
+    setTesting(false);
+    setTestMsg({ ok: res.ok, text: res.message });
+  };
+
+  const handleClearKey = () => {
+    setApiKeyInput("");
+    setGeminiApiKey("");
+    setKeyActive(false);
+    setTestMsg({ ok: false, text: "Đã gỡ Gemini API Key khỏi trình duyệt." });
+    window.dispatchEvent(new Event("sl-gemini-key-changed"));
+  };
+
   return (
     <div className="fixed bottom-2.5 left-2.5 z-[90] select-none">
-      <AnimatePresence>
-        {open && (
+      <AnimatePresence mode="wait">
+        {panel === "dev" && (
           <motion.div
+            key="dev-panel"
             initial={{ opacity: 0, y: 12, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.94 }}
@@ -43,10 +75,7 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
             <div className="border border-sky-400/25 p-2.5">
               <div className="mb-2 flex items-center justify-between font-sys text-[9px] tracking-[0.25em] text-sky-300">
                 <span>DEV · NHẢY MÀN NHANH</span>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="px-1.5 py-0.5 text-sky-300/70 hover:text-white"
-                >
+                <button onClick={() => setPanel("none")} className="px-1.5 py-0.5 text-sky-300/70 hover:text-white">
                   ✕
                 </button>
               </div>
@@ -56,7 +85,7 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
                     key={item.label}
                     onClick={() => {
                       onJump(item.target);
-                      setOpen(false);
+                      setPanel("none");
                     }}
                     className={`flex w-full items-center justify-between border px-2.5 py-1.5 text-left text-[11px] transition active:scale-[0.98] ${
                       item.danger
@@ -84,15 +113,107 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
             </div>
           </motion.div>
         )}
+
+        {panel === "gemini" && (
+          <motion.div
+            key="gemini-panel"
+            initial={{ opacity: 0, y: 12, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.94 }}
+            transition={{ duration: 0.18 }}
+            className="sys-panel sys-cut mb-2 w-72 p-1 sm:w-80"
+          >
+            <div className="border border-cyan-400/30 p-3">
+              <div className="mb-2 flex items-center justify-between font-sys text-[9px] tracking-[0.22em] text-cyan-300">
+                <span>GEMINI AI · CẤU HÌNH ĐỌC VỊ</span>
+                <button onClick={() => setPanel("none")} className="px-1.5 py-0.5 text-cyan-300/70 hover:text-white">
+                  ✕
+                </button>
+              </div>
+              <p className="mb-2.5 text-[11px] leading-relaxed text-sky-100/75">
+                Nhập <strong>Gemini API Key</strong> để kết hợp phân tích chiến thuật của{" "}
+                <span className="text-cyan-300">Gemini 2.5 Flash</span> với mô hình Online ML cục bộ.
+              </p>
+
+              <div className="flex items-center gap-1">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="AIzaSy..."
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="min-w-0 flex-1 border border-cyan-500/40 bg-[#020814] px-2.5 py-1.5 font-mono text-[11px] text-cyan-100 placeholder:text-sky-300/30 focus:border-cyan-300 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((s) => !s)}
+                  className="shrink-0 border border-cyan-500/35 bg-cyan-950/40 px-2 py-1.5 font-sys text-[8px] tracking-[0.15em] text-cyan-200 hover:bg-cyan-900/50"
+                >
+                  {showKey ? "ẨN" : "HIỆN"}
+                </button>
+              </div>
+
+              <div className="mt-2 flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleSaveAndTest}
+                  disabled={testing}
+                  className="flex-1 border border-cyan-400/60 bg-cyan-500/20 py-1.5 font-sys text-[8px] font-bold tracking-[0.2em] text-cyan-100 transition hover:bg-cyan-500/35 disabled:opacity-50"
+                >
+                  {testing ? "ĐANG KIỂM TRA…" : "LƯU & TEST KEY"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearKey}
+                  className="border border-red-400/40 bg-red-950/40 px-2.5 py-1.5 font-sys text-[8px] tracking-[0.18em] text-red-200 transition hover:bg-red-900/50"
+                >
+                  XÓA
+                </button>
+              </div>
+
+              {testMsg && (
+                <div
+                  className={`mt-2 border px-2 py-1.5 text-[10px] leading-snug ${
+                    testMsg.ok
+                      ? "border-emerald-400/45 bg-emerald-950/40 text-emerald-200"
+                      : "border-amber-400/40 bg-amber-950/35 text-amber-200"
+                  }`}
+                >
+                  {testMsg.ok ? "✔ " : "⚠ "}
+                  {testMsg.text}
+                </div>
+              )}
+
+              <div className="mt-2 text-[9px] leading-tight text-sky-200/45">
+                Key chỉ lưu cục bộ trong <code>localStorage</code> của trình duyệt này, không gửi về server khác ngoài Google Gemini API.
+              </div>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 border border-sky-400/45 bg-[#040a18]/80 px-2.5 py-1.5 font-sys text-[8px] tracking-[0.22em] text-sky-200/85 opacity-75 backdrop-blur-md transition hover:border-sky-300 hover:opacity-100 hover:shadow-[0_0_16px_rgba(79,168,255,0.45)] sm:text-[9px]"
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-        <span>DEV · NHẢY MÀN</span>
-      </button>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => setPanel((p) => (p === "dev" ? "none" : "dev"))}
+          className="flex items-center gap-1.5 border border-sky-400/45 bg-[#040a18]/80 px-2.5 py-1.5 font-sys text-[8px] tracking-[0.22em] text-sky-200/85 opacity-80 backdrop-blur-md transition hover:border-sky-300 hover:opacity-100 hover:shadow-[0_0_16px_rgba(79,168,255,0.45)] sm:text-[9px]"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <span>DEV · NHẢY MÀN</span>
+        </button>
+
+        <button
+          onClick={() => setPanel((p) => (p === "gemini" ? "none" : "gemini"))}
+          className={`flex items-center gap-1.5 border px-2.5 py-1.5 font-sys text-[8px] tracking-[0.2em] backdrop-blur-md transition hover:opacity-100 sm:text-[9px] ${
+            keyActive
+              ? "border-cyan-400/65 bg-cyan-950/75 text-cyan-100 opacity-90 shadow-[0_0_14px_rgba(34,211,238,0.3)]"
+              : "border-cyan-500/35 bg-[#040a18]/80 text-cyan-200/75 opacity-80 hover:border-cyan-300"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${keyActive ? "bg-cyan-300 shadow-[0_0_6px_#22d3ee]" : "bg-slate-400"}`} />
+          <span>GEMINI KEY</span>
+        </button>
+      </div>
     </div>
   );
 }

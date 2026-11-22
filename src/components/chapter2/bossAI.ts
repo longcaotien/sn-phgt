@@ -1,3 +1,10 @@
+import {
+  analyzeWithGemini,
+  hasGeminiApiKey,
+  type GeminiStatus,
+  type GeminiTactic,
+} from "./geminiAI";
+
 export type SkillKind = "gaze" | "laugh" | "fist" | "judgment";
 
 export type PredictionSnapshot = {
@@ -9,6 +16,9 @@ export type PredictionSnapshot = {
   accuracy: number; // % đoán đúng thực tế
   reason: string;
   warmedUp: boolean;
+  geminiStatus: GeminiStatus;
+  geminiTaunt?: string;
+  prioritySkill?: SkillKind;
 };
 
 const LANE_NAMES = ["TRÁI", "GIỮA", "PHẢI"];
@@ -66,9 +76,75 @@ export class PlayerBehaviorTracker {
   private reactionSamples: number[] = [];
   private fistTimingOffsets: number[] = [];
   private lastDangerKey = "";
+  private geminiTactic: GeminiTactic | null = null;
+  private geminiStatus: GeminiStatus = hasGeminiApiKey() ? "ready" : "off";
+  private geminiBusy = false;
+  private lastGeminiAt = 0;
+  private lastGeminiSamples = 0;
 
   constructor(persist = false) {
     if (persist) this.load();
+  }
+
+  refreshGeminiState() {
+    if (!hasGeminiApiKey()) {
+      this.geminiStatus = "off";
+      this.geminiTactic = null;
+    } else if (this.geminiStatus === "off") {
+      this.geminiStatus = "ready";
+    }
+  }
+
+  /** Gọi Gemini 2.5 Flash phân tích chiến thuật ở nền (không bao giờ làm khựng game) */
+  maybeSyncGemini(currentLane: number, stage: 1 | 2 | 3, onUpdate?: (snap: PredictionSnapshot) => void) {
+    this.refreshGeminiState();
+    if (!hasGeminiApiKey()) return;
+    if (this.samples < 3 || this.geminiBusy) return;
+
+    const now = Date.now();
+    const enoughNewSamples = !this.geminiTactic || this.samples - this.lastGeminiSamples >= 4;
+    const cooledDown = now - this.lastGeminiAt >= 7500;
+    if (!enoughNewSamples || !cooledDown) return;
+
+    this.geminiBusy = true;
+    this.geminiStatus = "syncing";
+    this.lastGeminiAt = now;
+    this.lastGeminiSamples = this.samples;
+
+    const mlSnap = this.predict(currentLane);
+    analyzeWithGemini({
+      currentLane,
+      stage,
+      samples: this.samples,
+      accuracy: mlSnap.accuracy,
+      moveHistory: [...this.moveHistory],
+      laneCounts: [...this.laneCounts] as [number, number, number],
+      mlProbs: [...mlSnap.probs] as [number, number, number],
+      avgReactionMs: this.avgReactionMs(),
+      skillStats: {
+        gaze: { attempts: this.skillAttempts.gaze, fails: this.skillFails.gaze },
+        laugh: { attempts: this.skillAttempts.laugh, fails: this.skillFails.laugh },
+        fist: { attempts: this.skillAttempts.fist, fails: this.skillFails.fist },
+        judgment: { attempts: this.skillAttempts.judgment, fails: this.skillFails.judgment },
+      },
+    })
+      .then((tactic) => {
+        if (tactic) {
+          this.geminiTactic = tactic;
+          this.geminiStatus = "active";
+          onUpdate?.(this.predict(currentLane));
+        } else {
+          this.geminiStatus = hasGeminiApiKey() ? "error" : "off";
+          onUpdate?.(this.predict(currentLane));
+        }
+      })
+      .catch(() => {
+        this.geminiStatus = "error";
+        onUpdate?.(this.predict(currentLane));
+      })
+      .finally(() => {
+        this.geminiBusy = false;
+      });
   }
 
   private load() {
@@ -223,11 +299,27 @@ export class PlayerBehaviorTracker {
     return this.reactionSamples.reduce((a, b) => a + b, 0) / this.reactionSamples.length;
   }
 
-  /** Dự đoán phân bố xác suất 3 làn bằng mô hình Softmax đã học */
+  /** Dự đoán phân bố xác suất 3 làn bằng mô hình Softmax + chiến thuật Gemini (nếu có) */
   predict(currentLane: number): PredictionSnapshot {
+    this.refreshGeminiState();
     const warmedUp = this.samples >= 3;
     const x = this.extractFeatures(currentLane);
-    const probs = warmedUp ? this.forward(x) : ([0.33, 0.34, 0.33] as [number, number, number]);
+    const mlProbs = warmedUp ? this.forward(x) : ([0.33, 0.34, 0.33] as [number, number, number]);
+
+    const gemValid =
+      warmedUp &&
+      this.geminiTactic !== null &&
+      hasGeminiApiKey() &&
+      Date.now() - this.geminiTactic.updatedAt <= 60_000;
+
+    // Trộn 65% Online ML cục bộ + 35% Gemini Strategic Prior
+    const probs: [number, number, number] = gemValid
+      ? [
+          mlProbs[0] * 0.65 + this.geminiTactic!.laneProbs[0] * 0.35,
+          mlProbs[1] * 0.65 + this.geminiTactic!.laneProbs[1] * 0.35,
+          mlProbs[2] * 0.65 + this.geminiTactic!.laneProbs[2] * 0.35,
+        ]
+      : mlProbs;
 
     // Nếu phát hiện chu kỳ đảo làn rõ ràng, cộng nhẹ tín hiệu suy luận
     const h = this.moveHistory;
@@ -247,13 +339,18 @@ export class PlayerBehaviorTracker {
 
     const maxP = Math.max(probs[0], probs[1], probs[2]);
     const dataScale = Math.min(1, this.samples / 8);
-    const confidence = warmedUp ? Math.min(0.95, 0.35 + (maxP - 0.33) * 0.9 * dataScale + dataScale * 0.12) : 0.25;
+    const geminiAgreement = gemValid && this.geminiTactic!.predictedNextLane === best ? 0.06 : 0;
+    const confidence = warmedUp
+      ? Math.min(0.96, 0.35 + (maxP - 0.33) * 0.9 * dataScale + dataScale * 0.12 + geminiAgreement)
+      : 0.25;
     const accuracy = this.evalTotal > 0 ? Math.round((this.evalCorrect / this.evalTotal) * 100) : 0;
 
     const dirTotal = this.leftMoves + this.rightMoves || 1;
     let reason = `TRỌNG SỐ LÀN ${LANE_NAMES[best]}`;
     if (!warmedUp) {
       reason = "ĐANG THU THẬP MẪU HÀNH VI…";
+    } else if (gemValid && this.geminiTactic!.patternSummary) {
+      reason = this.geminiTactic!.patternSummary;
     } else if (altTarget === best) {
       reason = "PHÁT HIỆN ĐẢO LÀN LẶP";
     } else if (best < currentLane && this.leftMoves / dirTotal > 0.6) {
@@ -273,6 +370,9 @@ export class PlayerBehaviorTracker {
       accuracy,
       reason,
       warmedUp,
+      geminiStatus: this.geminiStatus,
+      geminiTaunt: gemValid ? this.geminiTactic!.taunt : undefined,
+      prioritySkill: gemValid ? this.geminiTactic!.prioritySkill : undefined,
     };
   }
 
@@ -332,7 +432,13 @@ export class PlayerBehaviorTracker {
       const failRatio = attempts > 0 ? this.skillFails[k] / attempts : 0.35;
       const novelty = attempts === 0 ? 0.55 : 0;
       const stageBoost = k === "judgment" && stage >= 2 ? 0.35 : 0;
-      return 1 + failRatio * 1.25 + novelty + stageBoost;
+      const geminiBoost =
+        this.geminiTactic &&
+        Date.now() - this.geminiTactic.updatedAt <= 60_000 &&
+        this.geminiTactic.prioritySkill === k
+          ? 0.9
+          : 0;
+      return 1 + failRatio * 1.25 + novelty + stageBoost + geminiBoost;
     });
 
     const total = weights.reduce((a, b) => a + b, 0);

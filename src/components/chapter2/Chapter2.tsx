@@ -93,6 +93,16 @@ export default function Chapter2({
     phaseRef.current = phase;
   }, [phase]);
 
+  useEffect(() => {
+    const onKeyChange = () => {
+      if (!dodgeTrackerRef.current) return;
+      dodgeTrackerRef.current.refreshGeminiState();
+      setDodgePred(dodgeTrackerRef.current.predict(laneRef.current));
+    };
+    window.addEventListener("sl-gemini-key-changed", onKeyChange);
+    return () => window.removeEventListener("sl-gemini-key-changed", onKeyChange);
+  }, []);
+
   const showPop = useCallback((text: string, kind: Pop["kind"]) => {
     clearTimeout(popTimer.current);
     setPop({ id: ++idRef.current, text, kind });
@@ -281,6 +291,9 @@ export default function Chapter2({
         }
         tracker.recordStay(laneRef.current, true);
         setDodgePred(tracker.predict(laneRef.current));
+        tracker.maybeSyncGemini(laneRef.current, 1, (s) => {
+          if (!cancelled) setDodgePred(s);
+        });
         threatWarnAtRef.current = 0;
         await sleep(460);
         if (cancelled) return;
@@ -774,6 +787,11 @@ export default function Chapter2({
                       ? `ML ĐỌC VỊ ${dodgePred.adaptRate}% · MẪU ${dodgePred.samples} · [${LANE_NAMES[dodgePred.predictedLane]}]`
                       : `ML THU THẬP ${dodgePred.samples}/3`}
                   </span>
+                  {dodgePred.geminiStatus === "active" && (
+                    <span className="border border-cyan-400/50 bg-cyan-950/60 px-1 text-[6.5px] text-cyan-200">
+                      + GEMINI
+                    </span>
+                  )}
                 </div>
               )}
             </div>

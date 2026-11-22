@@ -153,6 +153,16 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   }, [skill]);
 
   useEffect(() => {
+    const onKeyChange = () => {
+      if (!trackerRef.current) return;
+      trackerRef.current.refreshGeminiState();
+      setPrediction(trackerRef.current.predict(laneRef.current));
+    };
+    window.addEventListener("sl-gemini-key-changed", onKeyChange);
+    return () => window.removeEventListener("sl-gemini-key-changed", onKeyChange);
+  }, []);
+
+  useEffect(() => {
     hpRef.current = hp;
     const dead = hp <= 0;
     deadRef.current = dead;
@@ -352,6 +362,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           tracker.recordStay(laneRef.current, true);
           setPrediction(tracker.predict(laneRef.current));
         }
+
+        // Đồng bộ phân tích chiến thuật với Gemini (chạy nền, không làm khựng trận)
+        tracker.maybeSyncGemini(laneRef.current, stage, (nextSnap) => {
+          if (!cancelled) setPrediction(nextSnap);
+        });
 
         setDanger(dLanes);
         setSkill({ kind, id, mode: "telegraph", aiLocked });
@@ -890,7 +905,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               <span className="text-red-400">◆</span>
               <span>{Math.max(0, bossHp)} / {BOSS_MAX_HP}</span>
             </div>
-            {/* Chỉ báo ML đọc vị trực tuyến */}
+            {/* Chỉ báo ML + Gemini đọc vị trực tuyến */}
             <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200 backdrop-blur-sm sm:text-[8px]">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
@@ -911,7 +926,33 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                   [{LANE_NAMES[prediction.predictedLane]} {Math.round(prediction.probs[prediction.predictedLane] * 100)}%]
                 </span>
               )}
+              {prediction.geminiStatus !== "off" && (
+                <span
+                  className={`rounded-sm px-1 py-px text-[6.5px] sm:text-[7px] ${
+                    prediction.geminiStatus === "active"
+                      ? "border border-cyan-400/50 bg-cyan-950/60 text-cyan-200"
+                      : prediction.geminiStatus === "syncing"
+                      ? "animate-pulse border border-sky-400/40 bg-sky-950/60 text-sky-200"
+                      : prediction.geminiStatus === "error"
+                      ? "border border-red-400/40 bg-red-950/60 text-red-300"
+                      : "border border-sky-500/30 bg-sky-950/40 text-sky-300/80"
+                  }`}
+                >
+                  {prediction.geminiStatus === "active"
+                    ? "+ GEMINI"
+                    : prediction.geminiStatus === "syncing"
+                    ? "GEMINI…"
+                    : prediction.geminiStatus === "error"
+                    ? "GEMINI LỖI"
+                    : "GEMINI SẴN SÀNG"}
+                </span>
+              )}
             </div>
+            {prediction.geminiTaunt && (
+              <div className="mt-0.5 hidden truncate font-sys text-[8px] tracking-[0.12em] text-cyan-200/85 sm:block">
+                “{prediction.geminiTaunt}”
+              </div>
+            )}
           </div>
 
           {/* combo */}
