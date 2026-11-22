@@ -20,9 +20,9 @@ const BUBBLE_LAYOUT = [
 
 // Tọa độ chính xác 3 ngọn nến trên ảnh maid-cake.webp (544x900)
 const CANDLE_POS = [
-  { left: "15.7%", top: "22.2%" },
-  { left: "20.0%", top: "21.3%" },
-  { left: "24.9%", top: "22.2%" },
+  { left: "15.7%", top: "22.5%" },
+  { left: "20.0%", top: "21.6%" },
+  { left: "24.9%", top: "22.5%" },
 ];
 
 export default function BirthdayWorld({
@@ -55,11 +55,11 @@ export default function BirthdayWorld({
   // Parallax chiều sâu 4K theo chuột
   const mx = useMotionValue(0);
   const my = useMotionValue(0);
-  const sx = useSpring(mx, { stiffness: 36, damping: 20 });
-  const sy = useSpring(my, { stiffness: 36, damping: 20 });
-  const bgX = useTransform(sx, (v) => v * -16);
+  const sx = useSpring(mx, { stiffness: 32, damping: 20 });
+  const sy = useSpring(my, { stiffness: 32, damping: 20 });
+  const bgX = useTransform(sx, (v) => v * -18);
   const bgY = useTransform(sy, (v) => v * -10);
-  const midX = useTransform(sx, (v) => v * -6);
+  const midX = useTransform(sx, (v) => v * -7);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -98,7 +98,7 @@ export default function BirthdayWorld({
     const rect = cakeBoxRef.current?.getBoundingClientRect();
     const origin = rect
       ? { x: (rect.left + rect.width / 2) / window.innerWidth, y: (rect.top + rect.height / 2) / window.innerHeight }
-      : { x: 0.46, y: 0.52 };
+      : { x: 0.52, y: 0.52 };
 
     confetti({ particleCount: 95, spread: 80, startVelocity: 48, origin, colors, scalar: 1.05 });
 
@@ -245,27 +245,27 @@ export default function BirthdayWorld({
       animate={{ opacity: 1 }}
       transition={{ duration: 1.1 }}
     >
-      {/* Background 4K thiên nhiên hoàng hôn + parallax + chuyển động gió nhẹ */}
+      {/* Background 4K thiên nhiên hoàng hôn + parallax + chuyển động êm */}
       <motion.div className="pointer-events-none absolute -inset-6" style={{ x: bgX, y: bgY }}>
         <motion.img
           src={sceneBg}
           alt="Khu vườn thiên nhiên 4K"
           className="h-full w-full object-cover object-center"
-          animate={{ scale: [1.03, 1.07, 1.03] }}
+          animate={{ scale: [1.03, 1.065, 1.03] }}
           transition={{ duration: 28, repeat: Infinity, ease: "easeInOut" }}
         />
       </motion.div>
 
-      {/* Lớp ánh nắng hoàng hôn & chiều sâu không khí */}
+      {/* Lớp ánh nắng hoàng hôn & chiều sâu điện ảnh */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(circle at 58% 36%, rgba(255, 224, 150, 0.2), transparent 46%), linear-gradient(180deg, rgba(16, 28, 22, 0.28) 0%, rgba(12, 20, 18, 0.06) 46%, rgba(8, 16, 12, 0.45) 100%)",
+            "radial-gradient(circle at 59% 36%, rgba(255, 224, 150, 0.22), transparent 46%), linear-gradient(180deg, rgba(16, 28, 22, 0.26) 0%, rgba(12, 20, 18, 0.04) 46%, rgba(8, 16, 12, 0.36) 100%)",
         }}
       />
 
-      {/* Lớp hiệu ứng sau: tia nắng, sóng mặt hồ, liễu rủ lay trong gió, đom đóm */}
+      {/* Lớp hiệu ứng sau: tia nắng, sương hồ, sóng lấp lánh, chim bay, liễu rủ, đom đóm */}
       <NatureCanvas layer="back" />
 
       {/* Header điều khiển trên cùng */}
@@ -292,7 +292,7 @@ export default function BirthdayWorld({
       </div>
 
       {/* ============================================================
-          CẢNH 1 & 2: KHU VƯỜN 4K VỚI 2 CÔ HẦU GÁI & 2 CHIẾC BÀN
+          CẢNH 1 & 2: KHU VƯỜN 4K VỚI 2 CÔ HẦU GÁI & 2 CHIẾC BÀN 4K
       ============================================================ */}
       <AnimatePresence>
         {(stage === "celebrate" || stage === "fireworks") && (
@@ -308,7 +308,7 @@ export default function BirthdayWorld({
             <motion.div
               animate={stage === "fireworks" ? { scale: [1, 1.05, 1.01] } : {}}
               transition={{ duration: 0.8 }}
-              className="pointer-events-none relative z-30 mx-auto max-w-2xl px-4 pt-14 text-center sm:pt-16"
+              className="pointer-events-none relative z-30 mx-auto max-w-2xl px-4 pt-14 text-center sm:pt-14"
             >
               <div className="text-[10px] font-semibold uppercase tracking-[0.34em] text-amber-200 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)] sm:text-xs">
                 Thung Lũng Hoàng Hôn · 30 / 11
@@ -335,12 +335,12 @@ export default function BirthdayWorld({
               </p>
             </motion.div>
 
-            {/* Sân khấu nhân vật & 2 bàn (có parallax nhẹ) */}
+            {/* Sân khấu nhân vật & 2 bàn 4K thoáng đãng */}
             <motion.div style={{ x: midX }} className="absolute inset-0">
               {/* 1. CÔ HẦU GÁI #2: NGỒI ĐỌC SÁCH DƯỚI GỐC CÂY BÊN TRÁI */}
-              <div className="absolute bottom-[31%] left-[-4%] z-10 sm:bottom-[10%] sm:left-[2%] lg:left-[5%]">
-                {/* Bóng mềm dưới tán cây */}
-                <div className="pointer-events-none absolute -bottom-1 left-1/2 h-5 w-32 -translate-x-1/2 rounded-full bg-black/50 blur-md sm:w-44" />
+              <div className="absolute bottom-[34%] left-[-4%] z-10 sm:bottom-[13%] sm:left-[2.5%] lg:left-[4.5%]">
+                {/* Bóng mềm hòa nền cỏ dưới tán cây */}
+                <div className="pointer-events-none absolute -bottom-2 left-1/2 h-6 w-36 -translate-x-1/2 rounded-full bg-black/55 blur-lg sm:w-48" />
 
                 <AnimatePresence>
                   {bookMaidTalk && (
@@ -364,54 +364,71 @@ export default function BirthdayWorld({
                   aria-label="Cô hầu gái ngồi đọc sách dưới gốc cây"
                   className="group relative block focus:outline-none"
                 >
+                  {/* Chuyển động anime Live2D-style: thở nhẹ + nghiêng theo gió + chớp mắt */}
                   <motion.div
-                    animate={{ y: [0, -3, 0], rotate: [0, 0.5, 0] }}
-                    transition={{ duration: 5.5, repeat: Infinity, ease: "easeInOut" }}
+                    animate={{
+                      y: [0, -2.5, 0],
+                      rotate: [-0.4, 0.7, -0.4],
+                      scaleY: [1, 1.009, 1],
+                    }}
+                    transition={{ duration: 4.8, repeat: Infinity, ease: "easeInOut" }}
+                    style={{ transformOrigin: "bottom center" }}
+                    className="relative"
                   >
                     <img
                       src={maidBook}
                       alt="Cô hầu gái ngồi đọc sách dưới gốc cây"
                       draggable={false}
-                      className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition group-hover:brightness-105 sm:h-[38vh] lg:h-[43vh]"
+                      className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition group-hover:brightness-105 sm:h-[37vh] lg:h-[42vh]"
                     />
                   </motion.div>
                 </button>
               </div>
 
-              {/* 2. CÔ HẦU GÁI #1: QUỲ HAI GỐI HAI TAY NÂNG BÁNH SINH NHẬT Ở TRUNG TÂM */}
-              <div className="absolute bottom-[13%] left-1/2 z-20 -translate-x-1/2 sm:bottom-[5.5%]">
-                {/* Bóng mềm trên thảm cỏ */}
-                <div className="pointer-events-none absolute -bottom-1 left-1/2 h-6 w-52 -translate-x-1/2 rounded-full bg-black/55 blur-lg sm:w-72" />
+              {/* 2. BÀN THIỆP 4K (ĐẶT TÁCH BẠCH KHOẢNG TRỐNG GIỮA TRÁI) */}
+              <div className="absolute bottom-[2%] left-[2.5%] z-[25] sm:bottom-[3%] sm:left-[21%] lg:left-[23.5%]">
+                <CardTable letterRead={letterRead} onClick={() => setLetterOpen(true)} />
+              </div>
+
+              {/* 3. CÔ HẦU GÁI #1: QUỲ HAI GỐI HAI TAY NÂNG BÁNH SINH NHẬT (DỊCH THOÁNG SANG PHẢI TRUNG TÂM) */}
+              <div className="absolute bottom-[20%] left-1/2 z-20 -translate-x-1/2 sm:bottom-[3.5%] sm:left-[55%]">
+                {/* Bóng mềm hòa mặt cỏ */}
+                <div className="pointer-events-none absolute -bottom-2 left-1/2 h-7 w-56 -translate-x-1/2 rounded-full bg-black/55 blur-lg sm:w-72" />
 
                 <motion.div
-                  animate={{ y: [0, -3.5, 0] }}
-                  transition={{ duration: 4.8, repeat: Infinity, ease: "easeInOut" }}
+                  animate={{
+                    y: [0, -3, 0],
+                    rotate: [-0.35, 0.55, -0.35],
+                    scaleY: [1, 1.008, 1],
+                  }}
+                  transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ transformOrigin: "bottom center" }}
                   className="relative"
                 >
                   <img
                     src={maidCake}
                     alt="Cô hầu gái quỳ gối nâng bánh sinh nhật"
                     draggable={false}
-                    className="h-[46vh] w-auto max-w-none select-none object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.62)] sm:h-[58vh] lg:h-[63vh]"
+                    className="h-[40vh] w-auto max-w-none select-none object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.62)] sm:h-[56vh] lg:h-[61vh]"
                   />
 
-                  {/* Hào quang vàng ấm phía sau chiếc bánh */}
-                  <div className="pointer-events-none absolute left-[6%] top-[22%] h-[32%] w-[38%] rounded-full bg-[radial-gradient(circle,rgba(255,226,140,0.42),transparent_70%)] blur-xl" />
+                  {/* Hào quang nắng vàng hoàng hôn tỏa nhẹ từ sau bánh */}
+                  <div className="pointer-events-none absolute left-[6%] top-[22%] h-[30%] w-[36%] rounded-full bg-[radial-gradient(circle,rgba(255,228,150,0.36),transparent_70%)] blur-xl" />
 
-                  {/* 3 Ngọn lửa nến lung linh sống động trên bánh */}
+                  {/* 3 Ngọn lửa nến mảnh & sáng dịu kiểu anime (không thô) */}
                   {CANDLE_POS.map((pos, idx) => (
                     <motion.span
                       key={idx}
                       animate={{
-                        scale: [1, 1.24, 0.92, 1.15, 1],
-                        rotate: [-5, 6, -3, 4, -5],
-                        opacity: [0.9, 1, 0.85, 1, 0.9],
+                        scale: [1, 1.18, 0.94, 1.12, 1],
+                        rotate: [-4, 5, -3, 3, -4],
+                        opacity: [0.85, 1, 0.8, 1, 0.85],
                       }}
                       transition={{ duration: 0.85 + idx * 0.14, repeat: Infinity, ease: "easeInOut" }}
                       style={{ left: pos.left, top: pos.top }}
-                      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
+                      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 mix-blend-screen"
                     >
-                      <span className="block h-3 w-1.5 rounded-full bg-gradient-to-t from-orange-500 via-yellow-200 to-white shadow-[0_0_14px_3px_rgba(251,191,36,0.92)] sm:h-3.5 sm:w-2" />
+                      <span className="block h-3 w-1.5 rounded-full bg-gradient-to-t from-amber-500 via-yellow-200 to-white shadow-[0_0_12px_3px_rgba(253,224,71,0.85)] sm:h-3.5 sm:w-1.5" />
                     </motion.span>
                   ))}
 
@@ -426,12 +443,10 @@ export default function BirthdayWorld({
                       knifeHeld && !cakeCut ? "cursor-crosshair" : "pointer-events-none"
                     }`}
                   >
-                    {/* Đường gợi ý cắt bánh phát sáng khi đang cầm dao */}
                     {knifeHeld && !cakeCut && (
-                      <div className="pointer-events-none absolute left-1/2 top-[16%] h-[72%] w-1 -translate-x-1/2 animate-pulse rounded-full bg-gradient-to-b from-transparent via-amber-200 to-transparent shadow-[0_0_16px_#fde68a]" />
+                      <div className="pointer-events-none absolute left-1/2 top-[16%] h-[72%] w-0.5 -translate-x-1/2 animate-pulse rounded-full bg-gradient-to-b from-transparent via-amber-200 to-transparent shadow-[0_0_14px_#fde68a]" />
                     )}
 
-                    {/* Lát bánh tách nhẹ & tỏa sáng khi vừa cắt */}
                     <AnimatePresence>
                       {cakeCut && (
                         <motion.div
@@ -446,7 +461,6 @@ export default function BirthdayWorld({
                       )}
                     </AnimatePresence>
 
-                    {/* Nét dao vẽ cắt bánh */}
                     {pathD && (
                       <svg className="pointer-events-none absolute inset-0 z-30 h-full w-full overflow-visible">
                         <path d={pathD} fill="none" stroke="rgba(255,224,130,0.55)" strokeWidth="10" strokeLinecap="round" />
@@ -454,7 +468,6 @@ export default function BirthdayWorld({
                       </svg>
                     )}
 
-                    {/* Vụn kem & lấp lánh văng ra khi cắt */}
                     {crumbs.map((c) => (
                       <motion.span
                         key={c.id}
@@ -468,7 +481,7 @@ export default function BirthdayWorld({
                   </div>
                 </motion.div>
 
-                {/* Nút Cắt Bánh Ngay tiện lợi nổi ngay dưới bánh khi đã cầm dao */}
+                {/* Nút Cắt Bánh Ngay khi đã cầm dao */}
                 <AnimatePresence>
                   {knifeHeld && !cakeCut && (
                     <motion.div
@@ -489,13 +502,8 @@ export default function BirthdayWorld({
                 </AnimatePresence>
               </div>
 
-              {/* 3. BÀN THIỆP (TRÁI) */}
-              <div className="absolute bottom-[3.5%] left-[3%] z-20 sm:bottom-[6.5%] sm:left-[23%] lg:left-[26%]">
-                <CardTable letterRead={letterRead} onClick={() => setLetterOpen(true)} />
-              </div>
-
-              {/* 4. BÀN DAO (PHẢI) */}
-              <div className="absolute bottom-[3.5%] right-[3%] z-20 sm:bottom-[6.5%] sm:right-[10%] lg:right-[15%]">
+              {/* 4. BÀN DAO 4K (PHẢI) */}
+              <div className="absolute bottom-[2%] right-[2.5%] z-[25] sm:bottom-[3%] sm:right-[7%] lg:right-[10.5%]">
                 <KnifeTable
                   knifeHeld={knifeHeld}
                   cakeCut={cakeCut}
@@ -704,7 +712,7 @@ export default function BirthdayWorld({
         )}
       </AnimatePresence>
 
-      {/* Lớp cỏ & hoa dại 4K chuyển động trước chân bàn/gối + cánh hoa bay */}
+      {/* Lớp cỏ mềm mại & cánh hoa anh đào + bokeh 4K ở tiền cảnh */}
       <NatureCanvas layer="front" />
 
       {/* ============================================================
