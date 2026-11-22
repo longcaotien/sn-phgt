@@ -500,29 +500,57 @@ export default function BossVfxCanvas({
 
         if (st.skill.kind === "fist" || (st.skill.kind === "judgment" && st.skill.mode === "counter")) {
           const isCounter = st.skill.mode === "counter";
-          // Tụ lực ở trung tâm + cột chấn động xuống người chơi
+          // Tụ lực ở trung tâm + cột chấn động giáng xuống người chơi
           const cx = pts.chest.x;
           const cy = pts.chest.y * 0.9;
           const r = 45 + pulse * 30;
-          const grad = ctx.createRadialGradient(cx, cy, 4, cx, cy, r * 2.2);
-          grad.addColorStop(0, "rgba(255,255,255,0.85)");
-          grad.addColorStop(0.35, isCounter ? "rgba(168,85,255,0.55)" : "rgba(255,45,107,0.55)");
+          const grad = ctx.createRadialGradient(cx, cy, 4, cx, cy, r * 2.4);
+          grad.addColorStop(0, "rgba(255,255,255,0.9)");
+          grad.addColorStop(0.35, isCounter ? "rgba(168,85,255,0.6)" : "rgba(255,45,107,0.6)");
           grad.addColorStop(1, "transparent");
           ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2);
+          ctx.arc(cx, cy, r * 2.4, 0, Math.PI * 2);
           ctx.fill();
 
           if (st.skill.mode === "active" || isCounter) {
-            // Vòng ngắm phản công trên người chơi
+            // Tia tụ lực giáng từ ngực boss xuống vị trí người chơi
+            const beamGrad = ctx.createLinearGradient(cx, cy, playerX, playerY - 24);
+            beamGrad.addColorStop(0, "rgba(255,255,255,0.75)");
+            beamGrad.addColorStop(0.4, isCounter ? "rgba(192,132,252,0.55)" : "rgba(255,45,107,0.6)");
+            beamGrad.addColorStop(1, "rgba(255,220,130,0.85)");
             ctx.save();
-            ctx.translate(playerX, playerY - 20);
-            ctx.rotate(now * 0.004);
-            ctx.strokeStyle = isCounter ? "rgba(168,85,255,0.85)" : "rgba(255,80,120,0.85)";
-            ctx.lineWidth = 2;
-            ctx.setLineDash([10, 8]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(playerX, playerY - 24);
+            ctx.strokeStyle = beamGrad;
+            ctx.lineWidth = 4 + pulse * 4;
+            ctx.shadowColor = isCounter ? "#c084fc" : "#ff2d6b";
+            ctx.shadowBlur = 22;
+            ctx.stroke();
+            ctx.restore();
+
+            if (Math.random() < 0.55) {
+              drawLightning(cx, cy, playerX, playerY - 24, 24, isCounter ? "#e9d5ff" : "#fda4af", 1.8);
+            }
+
+            // Vòng ngắm phản công đa tầng trên người chơi
+            ctx.save();
+            ctx.translate(playerX, playerY - 24);
+            ctx.rotate(now * 0.0045);
+            ctx.strokeStyle = isCounter ? "rgba(192,132,252,0.9)" : "rgba(255,70,120,0.9)";
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([12, 7]);
             ctx.beginPath();
             ctx.arc(0, 0, 56 + pulse * 10, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.rotate(-now * 0.009);
+            ctx.strokeStyle = "rgba(255,216,107,0.75)";
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 10]);
+            ctx.beginPath();
+            ctx.arc(0, 0, 38 + pulse * 6, 0, Math.PI * 2);
             ctx.stroke();
             ctx.restore();
           }

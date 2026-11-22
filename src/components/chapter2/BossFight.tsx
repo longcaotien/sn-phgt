@@ -119,20 +119,16 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   const [finalCut, setFinalCut] = useState(false);
   const [dying, setDying] = useState(false);
   const [win, setWin] = useState(false);
-  const [tapWindow, setTapWindow] = useState<{ id: number; dur: number; isCounter?: boolean } | null>(null);
+  const [tapWindow, setTapWindow] = useState<{ id: number; dur: number; isCounter?: boolean; shift?: number } | null>(null);
   const [durs, setDurs] = useState({ tele: 860, active: 1400 });
-  const [prediction, setPrediction] = useState<PredictionSnapshot>({
-    predictedLane: 1,
-    confidence: 0.35,
-    reason: "ĐANG QUÉT MẪU DI CHUYỂN…",
-    adaptRate: 35,
-  });
+  const trackerRef = useRef<PlayerBehaviorTracker | null>(null);
+  if (!trackerRef.current) trackerRef.current = new PlayerBehaviorTracker(true);
+  const [prediction, setPrediction] = useState<PredictionSnapshot>(() => trackerRef.current!.predict(1));
   const [vfxBurst, setVfxBurst] = useState<VfxBurst | null>(null);
   const [flashKey, setFlashKey] = useState(0);
   const [redKey, setRedKey] = useState(0);
   const [hitKey, setHitKey] = useState(0);
 
-  const trackerRef = useRef(new PlayerBehaviorTracker());
   const laneRef = useRef(1);
   const holdRef = useRef(false);
   const gaugeRef = useRef(0);
@@ -143,10 +139,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   const idRef = useRef(0);
   const threatStartRef = useRef(0);
   const fbTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const tapResolver = useRef<((res: "perfect" | "good" | "miss") => void) | null>(null);
+  const tapResolver = useRef<((res: "perfect" | "good" | "miss", offset?: number) => void) | null>(null);
   const tapStartRef = useRef(0);
   const tapDurRef = useRef(1);
   const tapCounterRef = useRef(false);
+  const tapShiftRef = useRef(0);
 
   const sceneShake = useAnimationControls();
   const bossControls = useAnimationControls();
@@ -198,8 +195,8 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
     laneRef.current = n;
     setLane(n);
     const reaction = threatStartRef.current > 0 ? performance.now() - threatStartRef.current : undefined;
-    trackerRef.current.recordMove(old, n, reaction);
-    setPrediction(trackerRef.current.predict(n));
+    trackerRef.current!.recordMove(old, n, reaction, true);
+    setPrediction(trackerRef.current!.predict(n));
   }, []);
 
   const tapNow = useCallback(() => {
@@ -207,14 +204,15 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
     if (!resolver) return;
     tapResolver.current = null;
     const p = (performance.now() - tapStartRef.current) / tapDurRef.current;
+    const sh = tapShiftRef.current;
     if (tapCounterRef.current) {
-      if (p >= 0.36 && p <= 0.68) resolver("perfect");
-      else if (p >= 0.24 && p <= 0.82) resolver("good");
-      else resolver("miss");
+      if (p >= 0.36 && p <= 0.68) resolver("perfect", p);
+      else if (p >= 0.24 && p <= 0.82) resolver("good", p);
+      else resolver("miss", p);
     } else {
-      if (p >= 0.49 && p <= 0.65) resolver("perfect");
-      else if (p >= 0.38 && p <= 0.78) resolver("good");
-      else resolver("miss");
+      if (p >= 0.49 + sh && p <= 0.65 + sh) resolver("perfect", p);
+      else if (p >= 0.38 + sh && p <= 0.78 + sh) resolver("good", p);
+      else resolver("miss", p);
     }
   }, []);
 
@@ -295,20 +293,21 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
       return alive();
     };
 
-    const resolveTap = (dur: number, isCounter = false) =>
-      new Promise<"perfect" | "good" | "miss">((resolve) => {
+    const resolveTap = (dur: number, isCounter = false, shift = 0) =>
+      new Promise<{ res: "perfect" | "good" | "miss"; offset?: number }>((resolve) => {
         tapStartRef.current = performance.now();
         tapDurRef.current = dur;
         tapCounterRef.current = isCounter;
+        tapShiftRef.current = shift;
         const timer = setTimeout(() => {
           if (tapResolver.current) {
             tapResolver.current = null;
-            resolve("miss");
+            resolve({ res: "miss" });
           }
         }, dur);
-        tapResolver.current = (res) => {
+        tapResolver.current = (res, offset) => {
           clearTimeout(timer);
-          resolve(res);
+          resolve({ res, offset });
         };
       });
 
@@ -322,10 +321,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         if (!(await wait(850))) return;
       }
 
+      const tracker = trackerRef.current!;
       while (alive()) {
         const stage: 1 | 2 | 3 = seqHp > 240 ? 1 : seqHp > 120 ? 2 : 3;
-        const speed = trackerRef.current.getSpeedMultiplier(stage);
-        const kind = trackerRef.current.pickBossSkill(lastKind, stage);
+        const speed = tracker.getSpeedMultiplier(stage);
+        const kind = tracker.pickBossSkill(lastKind, stage);
         lastKind = kind;
         const id = ++idRef.current;
 
@@ -336,19 +336,21 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         setDurs({ tele: teleMs, active: activeMs });
 
         let dLanes: number[] = [];
-        let snap = trackerRef.current.predict(laneRef.current);
+        let snap = tracker.predict(laneRef.current);
         let aiLocked = false;
+        const fistShift = kind === "fist" ? tracker.getFistTimingShift() : 0;
 
         if (kind === "gaze" || kind === "judgment") {
-          const picked = trackerRef.current.pickTargetedLanes(laneRef.current, 2, stage === 1 ? 0.7 : 0.88);
+          const picked = tracker.pickTargetedLanes(laneRef.current, 2, stage === 1 ? 0.72 : 0.88);
           dLanes = picked.lanes;
           snap = picked.predicted;
-          aiLocked = snap.confidence >= 0.45;
+          aiLocked = picked.aiUsed;
           setPrediction(snap);
           maxAdapt = Math.max(maxAdapt, snap.adaptRate);
           threatStartRef.current = performance.now();
         } else {
-          trackerRef.current.recordStay(laneRef.current);
+          tracker.recordStay(laneRef.current, true);
+          setPrediction(tracker.predict(laneRef.current));
         }
 
         setDanger(dLanes);
@@ -360,10 +362,10 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         });
 
         // Giai đoạn 3: Boss đọc vị hướng né sớm và đổi hướng mắt 1 lần (còn 680ms công bằng để phản ứng)
-        if (kind === "gaze" && stage === 3 && Math.random() < 0.45) {
+        if (kind === "gaze" && stage === 3 && snap.warmedUp && Math.random() < 0.45) {
           if (!(await wait(Math.round(teleMs * 0.58)))) return;
           if (!dLanes.includes(laneRef.current)) {
-            const retarget = trackerRef.current.pickTargetedLanes(laneRef.current, 2, 0.92);
+            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92);
             dLanes = retarget.lanes;
             setDanger(dLanes);
             setPrediction(retarget.predicted);
@@ -382,7 +384,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         if (kind === "gaze") shake(6);
         if (kind === "laugh") shake(12);
         if (kind === "fist") {
-          setTapWindow({ id, dur: activeMs });
+          setTapWindow({ id, dur: activeMs, shift: fistShift });
           shake(6);
         }
         if (kind === "judgment") shake(8);
@@ -403,7 +405,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             dmgDealt = brokeRead ? 50 : 40;
             subLabel = brokeRead ? `PHÁ ĐỌC VỊ! · -${dmgDealt} HP` : `-${dmgDealt} HP`;
           }
-          trackerRef.current.recordSkill("gaze", survived);
+          tracker.recordSkill("gaze", survived, undefined, true);
           await sleep(220);
         } else if (kind === "laugh") {
           await sleep(activeMs);
@@ -415,10 +417,10 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             dmgDealt = fullShield ? 58 : 45;
             subLabel = fullShield ? `NỘI LỰC TUYỆT ĐỐI! · -${dmgDealt} HP` : `-${dmgDealt} HP`;
           }
-          trackerRef.current.recordSkill("laugh", ok);
+          tracker.recordSkill("laugh", ok, undefined, true);
           shake(ok ? 9 : 16);
         } else if (kind === "fist") {
-          const tapRes = await resolveTap(activeMs, false);
+          const { res: tapRes, offset } = await resolveTap(activeMs, false, fistShift);
           if (cancelled) return;
           hitOutcome = tapRes === "perfect" ? "crit" : tapRes;
           if (tapRes === "perfect") {
@@ -428,7 +430,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             dmgDealt = 45;
             subLabel = `-${dmgDealt} HP`;
           }
-          trackerRef.current.recordSkill("fist", tapRes !== "miss");
+          tracker.recordSkill("fist", tapRes !== "miss", offset, true);
           shake(tapRes === "perfect" ? 18 : tapRes === "good" ? 12 : 15);
         } else {
           // judgment: né làn đọc vị -> phản công chớp nhoáng
@@ -438,14 +440,14 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           const dodged = !dLanes.includes(laneRef.current);
           if (!dodged) {
             hitOutcome = "miss";
-            trackerRef.current.recordSkill("judgment", false);
+            tracker.recordSkill("judgment", false, undefined, true);
           } else {
             const counterDur = Math.round(920 * speed);
             setDurs((d) => ({ ...d, active: counterDur }));
             setDanger([]);
             setSkill({ kind: "judgment", id, mode: "counter", aiLocked });
             setTapWindow({ id: id + 1, dur: counterDur, isCounter: true });
-            const tapRes = await resolveTap(counterDur, true);
+            const { res: tapRes } = await resolveTap(counterDur, true, 0);
             if (cancelled) return;
             hitOutcome = tapRes === "perfect" ? "crit" : tapRes;
             if (tapRes === "perfect") {
@@ -455,10 +457,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               dmgDealt = 50;
               subLabel = `-${dmgDealt} HP`;
             }
-            trackerRef.current.recordSkill("judgment", tapRes !== "miss");
+            tracker.recordSkill("judgment", tapRes !== "miss", undefined, true);
             shake(tapRes !== "miss" ? 16 : 14);
           }
         }
+        setPrediction(tracker.predict(laneRef.current));
 
         threatStartRef.current = 0;
         setSkill(null);
@@ -887,16 +890,27 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               <span className="text-red-400">◆</span>
               <span>{Math.max(0, bossHp)} / {BOSS_MAX_HP}</span>
             </div>
-            {/* Chỉ báo AI đọc vị */}
-            <div className="mt-1 inline-flex items-center gap-1.5 rounded-sm border border-violet-400/35 bg-[#12061e]/80 px-2 py-0.5 font-sys text-[7px] tracking-[0.16em] text-violet-200 backdrop-blur-sm sm:text-[8px]">
+            {/* Chỉ báo ML đọc vị trực tuyến */}
+            <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200 backdrop-blur-sm sm:text-[8px]">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
-                  prediction.adaptRate >= 60 ? "animate-ping bg-red-400" : "bg-violet-400"
+                  prediction.warmedUp && prediction.adaptRate >= 60 ? "animate-ping bg-red-400" : "bg-violet-400"
                 }`}
               />
-              <span>AI ĐỌC VỊ {prediction.adaptRate}%</span>
-              <span className="hidden text-violet-300/60 sm:inline">· {prediction.reason}</span>
-              <span className="text-amber-300">[{LANE_NAMES[prediction.predictedLane]}]</span>
+              <span>
+                {prediction.warmedUp
+                  ? `ML ĐỌC VỊ ${prediction.adaptRate}% · MẪU ${prediction.samples}`
+                  : `ML THU THẬP ${prediction.samples}/3`}
+              </span>
+              {prediction.accuracy > 0 && (
+                <span className="text-emerald-300/90">· ĐÚNG {prediction.accuracy}%</span>
+              )}
+              <span className="hidden text-violet-300/65 sm:inline">· {prediction.reason}</span>
+              {prediction.warmedUp && (
+                <span className="text-amber-300">
+                  [{LANE_NAMES[prediction.predictedLane]} {Math.round(prediction.probs[prediction.predictedLane] * 100)}%]
+                </span>
+              )}
             </div>
           </div>
 
@@ -1041,7 +1055,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                     <div
                       className="absolute inset-y-0"
                       style={{
-                        left: tapWindow.isCounter ? "24%" : "38%",
+                        left: tapWindow.isCounter ? "24%" : `${38 + (tapWindow.shift ?? 0) * 100}%`,
                         width: tapWindow.isCounter ? "58%" : "40%",
                         background: "rgba(79,168,255,0.22)",
                         borderLeft: "1px solid rgba(124,196,255,0.5)",
@@ -1052,7 +1066,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                     <div
                       className="zone-glow absolute inset-y-0 flex items-center justify-center"
                       style={{
-                        left: tapWindow.isCounter ? "36%" : "49%",
+                        left: tapWindow.isCounter ? "36%" : `${49 + (tapWindow.shift ?? 0) * 100}%`,
                         width: tapWindow.isCounter ? "32%" : "16%",
                         background:
                           "linear-gradient(90deg, rgba(255,170,50,.35), rgba(255,225,120,.95), rgba(255,170,50,.35))",

@@ -23,18 +23,30 @@ const STATUES = [
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export default function Chapter2({ onExit }: { onExit: () => void }) {
-  const [phase, setPhase] = useState<Phase>("title");
+type Props = {
+  onExit: () => void;
+  initialPhase?: Phase;
+  initialWave?: number;
+  initialBossHp?: number;
+};
+
+export default function Chapter2({
+  onExit,
+  initialPhase = "title",
+  initialWave = 0,
+  initialBossHp = BOSS_MAX_HP,
+}: Props) {
+  const [phase, setPhase] = useState<Phase>(initialPhase);
   const [hp, setHp] = useState(MAX_HP);
   const [lane, setLane] = useState(1);
   const [gauge, setGauge] = useState(0);
   const [holding, setHolding] = useState(false);
   const [gaze, setGaze] = useState<{ statue: number; mode: Gaze } | null>(null);
   const [threat, setThreat] = useState<Threat | null>(null);
-  const [wave, setWave] = useState(0);
-  const [awake, setAwake] = useState(false);
-  const [shattered, setShattered] = useState(false);
-  const [reward, setReward] = useState(false);
+  const [wave, setWave] = useState(initialWave);
+  const [awake, setAwake] = useState(initialPhase === "dodge" || initialPhase === "boss" || initialPhase === "clear");
+  const [shattered, setShattered] = useState(initialPhase === "clear");
+  const [reward, setReward] = useState(initialPhase === "clear");
   const [perfects, setPerfects] = useState(0);
   const [pop, setPop] = useState<Pop | null>(null);
   const [ghosts, setGhosts] = useState<{ id: number; lane: number }[]>([]);
@@ -42,25 +54,25 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   const [hitKey, setHitKey] = useState(0);
   const [runId, setRunId] = useState(0);
   const [bossRun, setBossRun] = useState(0);
-  const [bossStats, setBossStats] = useState<BossStats | null>(null);
-  const [dodgePred, setDodgePred] = useState<PredictionSnapshot>({
-    predictedLane: 1,
-    confidence: 0.35,
-    reason: "ĐANG QUÉT MẪU DI CHUYỂN…",
-    adaptRate: 35,
-  });
+  const [bossStats, setBossStats] = useState<BossStats | null>(() =>
+    initialPhase === "clear" ? { counters: 12, crits: 5, misses: 1, bestCombo: 8, hpLeft: 3, maxAdapt: 74 } : null
+  );
+  const dodgeTrackerRef = useRef<PlayerBehaviorTracker | null>(null);
+  if (!dodgeTrackerRef.current) dodgeTrackerRef.current = new PlayerBehaviorTracker(true);
+  const [dodgePred, setDodgePred] = useState<PredictionSnapshot>(() => dodgeTrackerRef.current!.predict(1));
 
-  const phaseRef = useRef<Phase>("title");
+  const phaseRef = useRef<Phase>(initialPhase);
   const hpRef = useRef(MAX_HP);
   const laneRef = useRef(1);
   const holdRef = useRef(false);
   const threatRef = useRef<Threat | null>(null);
   const escapeRef = useRef(0);
   const threatWarnAtRef = useRef(0);
-  const dodgeTrackerRef = useRef(new PlayerBehaviorTracker());
   const invulnRef = useRef(0);
   const deathFrom = useRef<"pray" | "dodge" | "boss">("pray");
-  const bossProgressRef = useRef(BOSS_MAX_HP);
+  const bossProgressRef = useRef(initialBossHp);
+  const startWaveRef = useRef(initialWave);
+  const fastQuestRef = useRef(initialPhase === "quest");
   const idRef = useRef(0);
   const popTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const tilt = useAnimationControls();
@@ -113,8 +125,8 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
       setLane(n);
       const th = threatRef.current;
       const reaction = threatWarnAtRef.current > 0 ? performance.now() - threatWarnAtRef.current : undefined;
-      dodgeTrackerRef.current.recordMove(old, n, reaction);
-      setDodgePred(dodgeTrackerRef.current.predict(n));
+      dodgeTrackerRef.current!.recordMove(old, n, reaction, true);
+      setDodgePred(dodgeTrackerRef.current!.predict(n));
       if (th && th.mode === "warn" && th.lanes.includes(old) && !th.lanes.includes(n)) {
         escapeRef.current = performance.now();
       }
@@ -208,35 +220,37 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     if (phase !== "dodge") return;
     let cancelled = false;
-    dodgeTrackerRef.current = new PlayerBehaviorTracker();
+    const tracker = dodgeTrackerRef.current!;
     laneRef.current = 1;
     setLane(1);
-    setWave(0);
+    const firstWave = startWaveRef.current;
+    startWaveRef.current = 0;
+    setWave(firstWave);
     setThreatBoth(null);
     setPerfects(0);
 
     (async () => {
       await sleep(950);
       let perfectCount = 0;
-      for (let i = 0; i < TOTAL_WAVES; i++) {
+      for (let i = firstWave; i < TOTAL_WAVES; i++) {
         if (cancelled) return;
         setWave(i + 1);
         const warn = Math.max(690, 1220 - i * 48);
         const count: 1 | 2 = i < 3 ? 1 : 2;
-        const adaptiveChance = i < 3 ? 0.35 : i < 7 ? 0.72 : 0.9;
-        const picked = dodgeTrackerRef.current.pickTargetedLanes(laneRef.current, count, adaptiveChance);
+        const adaptiveChance = i < 3 ? 0.45 : i < 7 ? 0.72 : 0.9;
+        const picked = tracker.pickTargetedLanes(laneRef.current, count, adaptiveChance);
         let lanes = picked.lanes;
         setDodgePred(picked.predicted);
         threatWarnAtRef.current = performance.now();
-        const aiLocked = i >= 3 && picked.predicted.confidence >= 0.45;
+        const aiLocked = picked.aiUsed && i >= 2;
         setThreatBoth({ lanes, mode: "warn", id: i, aiLocked });
 
-        // Đợt 9 & 11: tượng thần đọc vị bước né sớm và đổi hướng 1 lần (vẫn cho 560ms phản ứng)
-        if ((i === 8 || i === 10) && count === 2) {
+        // Đợt 9 & 11: tượng thần đọc vị bước né sớm và đổi hướng 1 lần (vẫn cho 580ms phản ứng)
+        if ((i === 8 || i === 10) && count === 2 && picked.predicted.warmedUp) {
           await sleep(Math.round(warn * 0.55));
           if (cancelled) return;
           if (!lanes.includes(laneRef.current)) {
-            const retarget = dodgeTrackerRef.current.pickTargetedLanes(laneRef.current, 2, 0.92);
+            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92);
             lanes = retarget.lanes;
             setDodgePred(retarget.predicted);
             threatWarnAtRef.current = performance.now();
@@ -265,7 +279,8 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
         } else {
           showPop("NÉ!", "dodge");
         }
-        dodgeTrackerRef.current.recordStay(laneRef.current);
+        tracker.recordStay(laneRef.current, true);
+        setDodgePred(tracker.predict(laneRef.current));
         threatWarnAtRef.current = 0;
         await sleep(460);
         if (cancelled) return;
@@ -752,9 +767,13 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
                 />
               </div>
               {phase === "dodge" && wave >= 3 && (
-                <div className="mt-1 inline-flex items-center gap-1 rounded-sm border border-violet-400/35 bg-[#12061e]/80 px-2 py-0.5 font-sys text-[7px] tracking-[0.16em] text-violet-200">
+                <div className="mt-1 inline-flex items-center gap-1 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
-                  <span>AI ĐỌC VỊ {dodgePred.adaptRate}% · [{LANE_NAMES[dodgePred.predictedLane]}]</span>
+                  <span>
+                    {dodgePred.warmedUp
+                      ? `ML ĐỌC VỊ ${dodgePred.adaptRate}% · MẪU ${dodgePred.samples} · [${LANE_NAMES[dodgePred.predictedLane]}]`
+                      : `ML THU THẬP ${dodgePred.samples}/3`}
+                  </span>
                 </div>
               )}
             </div>
@@ -939,12 +958,16 @@ export default function Chapter2({ onExit }: { onExit: () => void }) {
             key="quest"
             className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1, transition: { delay: 2.8, duration: 0.8 } }}
+            animate={{ opacity: 1, transition: { delay: fastQuestRef.current ? 0.1 : 2.8, duration: 0.7 } }}
             exit={{ opacity: 0, transition: { duration: 0.25 } }}
           >
             <motion.div
               initial={{ scaleY: 0.05, opacity: 0 }}
-              animate={{ scaleY: 1, opacity: 1, transition: { delay: 3, duration: 0.55, ease: [0.2, 0.9, 0.25, 1] } }}
+              animate={{
+                scaleY: 1,
+                opacity: 1,
+                transition: { delay: fastQuestRef.current ? 0.18 : 3, duration: 0.55, ease: [0.2, 0.9, 0.25, 1] },
+              }}
               exit={{ scaleY: 0.9, opacity: 0, transition: { duration: 0.2 } }}
               className="sys-panel w-full max-w-md p-1"
             >
