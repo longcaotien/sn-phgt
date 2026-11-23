@@ -126,3 +126,41 @@ convert anh.jpg -resize 1400x -strip -quality 72 anh.webp
 - `src/assets/c2/bossArena.webp` — đấu trường tầng sâu nhất.
 
 Ảnh được tối ưu WebP và dùng `mix-blend-mode: screen` + mask để hoà vào nền tối.
+
+## Khu vườn sinh nhật — dàn dựng & nhân vật động
+
+`src/components/birthday/` dựng cảnh bằng 5 lớp xếp chồng, tất cả đều chạy bằng `transform`/`opacity`
+để GPU lo liệu, không có layout reflow trong lúc animate.
+
+| Lớp | Nội dung | File |
+| --- | --- | --- |
+| 1 | Nền hoàng hôn parallax (scale 1.03 ↔ 1.065, chu kỳ 28 s) | `BirthdayWorld.tsx` |
+| 2 | Tia sáng thần tiên (god rays), sương, chim trời, bướm & ong bay | `NatureCanvas.tsx` (`layer="back"`) |
+| 3 | Hai cô hầu gái + bàn thiệp + bàn dao + linh vật | `BirthdayWorld.tsx`, `GardenTables.tsx`, `GardenCreatures.tsx` |
+| 4 | Cỏ tiền cảnh, cánh sakura, bokeh | `NatureCanvas.tsx` (`layer="front"`) |
+| 5 | Vignette điện ảnh + sương ấm chân cảnh | `.cinema-vignette` trong `index.css` |
+
+### Nhân vật động
+
+- **Hầu gái đọc sách**: thở đa nhịp (5,4 s, 5 keyframe), nghiêng người theo gió, `scaleY` 1 → 1,011,
+  lọn tóc mai lay, vệt sáng lật trang, `brightness`/`saturate` nhấp nhẹ, hào quang ấm phía sau.
+- **Hầu gái nâng bánh**: nhịp thở 4,6 s; khi cắt bánh xong chuyển sang **pose reo vui** —
+  nhún 2 nhịp (`y: 0 → -14 → 0 → -8 → 0`, `rotate` ±1,6°) rồi trở lại nhịp thở.
+- **Mèo mun & mèo trắng** (`GardenCreatures.tsx`): thở, vẫy đuôi (radial-gradient đuôi tự vẽ, không tốn ảnh),
+  mắt lấp lánh, thỉnh thoảng **ngước nhìn bướm** theo chu kỳ 9–13 s (`catLookUp` state).
+- **Bướm, ong, chim sẻ**: bướm bay quỹ đạo 7 điểm trong 17 s; ong vẽ bằng path arc;
+  chim sẻ nhảy nhót 9 s. Tất cả đều thuần SVG/hình học, không thêm byte ảnh.
+
+### Guard hiệu năng (giữ nguyên từ vòng tối ưu trước)
+
+`GardenCreatures.tsx` đọc `lowEnd` / `reduceMotionEnabled` từ `utils/perf.ts`:
+
+- `reduceMotionEnabled` → đứng yên hoàn toàn (`calm`), bỏ đom đóm.
+- `lowEnd` → mọi chu kỳ nhân 1,35 (animate ít khung hình hơn), đom đóm giảm còn 50 %.
+- `NatureCanvas` vẫn dùng `particleScale` cho số hạt và `createFrameLoop` (dừng khi tab ẩn).
+
+### Thêm linh vật mới
+
+Đặt ảnh WebP nền trong suốt vào `src/assets/`, rồi dùng lại `GardenCat` / `GardenButterfly` /
+`GardenSparrow` với toạ độ `left`/`bottom` theo phần trăm. Vị trí hiện tại đã né vùng tiêu đề
+(`top` 42–52 %) và hai bàn (hai bên mép dưới).

@@ -64,6 +64,21 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
 
     let birds: { x: number; y: number; speed: number; wingPh: number; scale: number }[] = [];
 
+    /** Bướm & ong bay lượn gần camera (thêm sinh động cho tiền cảnh) */
+    let flutter: {
+      x: number;
+      y: number;
+      ph: number;
+      sp: number;
+      amp: number;
+      size: number;
+      kind: "butterfly" | "bee";
+      hue: string;
+    }[] = [];
+
+    /** Tia sáng thần tiên (god rays) toả xuống từ tán lá */
+    let godRays: { xRatio: number; ph: number; w: number; a: number }[] = [];
+
     let blades: {
       xRatio: number;
       height: number;
@@ -232,6 +247,24 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
           scale: 0.65 + Math.random() * 0.45,
         }));
 
+        flutter = Array.from({ length: Math.max(4, Math.round(8 * density)) }, (_, i) => ({
+          x: Math.random() * w,
+          y: h * (0.35 + Math.random() * 0.45),
+          ph: Math.random() * Math.PI * 2,
+          sp: 0.35 + Math.random() * 0.5,
+          amp: 16 + Math.random() * 34,
+          size: 9 + Math.random() * 7,
+          kind: i % 3 === 0 ? "bee" : "butterfly",
+          hue: ["#ffd66e", "#ffb3d1", "#c8e6ff", "#ffe9a8"][i % 4],
+        }));
+
+        godRays = Array.from({ length: 6 }, (_, i) => ({
+          xRatio: 0.42 + i * 0.07 + (Math.random() - 0.5) * 0.03,
+          ph: Math.random() * Math.PI * 2,
+          w: 0.04 + Math.random() * 0.05,
+          a: 0.05 + Math.random() * 0.06,
+        }));
+
         buildStaticBack();
       } else {
         const count = Math.round((w < 640 ? 90 : 175) * (density < 1 ? 0.72 : 1));
@@ -318,6 +351,27 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
 
+      // 2b. Tia sáng thần tiên (god rays) — rẻ: chỉ 6 dải gradient mờ
+      ctx.globalCompositeOperation = "lighter";
+      for (const r of godRays) {
+        const sway = Math.sin(t * 0.28 + r.ph) * 0.012;
+        const x0 = (r.xRatio + sway) * w;
+        const alpha = r.a * (0.65 + 0.35 * Math.sin(t * 0.5 + r.ph));
+        const gx = ctx.createLinearGradient(x0, 0, x0 - h * 0.32, h);
+        gx.addColorStop(0, `rgba(255, 240, 190, ${alpha})`);
+        gx.addColorStop(0.55, `rgba(255, 226, 160, ${alpha * 0.45})`);
+        gx.addColorStop(1, "rgba(255, 210, 130, 0)");
+        ctx.fillStyle = gx;
+        ctx.beginPath();
+        ctx.moveTo(x0 - r.w * w, 0);
+        ctx.lineTo(x0 + r.w * w, 0);
+        ctx.lineTo(x0 + r.w * w - h * 0.3, h);
+        ctx.lineTo(x0 - r.w * w - h * 0.3, h);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = "source-over";
+
       // 3. Đàn chim bay chầm chậm phía chân trời
       ctx.strokeStyle = "rgba(85, 62, 58, 0.45)";
       ctx.lineWidth = 1.4;
@@ -397,6 +451,50 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
         ctx.globalAlpha = alpha;
         ctx.drawImage(dotWarm, f.x - size / 2, f.y - size / 2, size, size);
       }
+      ctx.globalAlpha = 1;
+
+      // 7. Bướm & ong bay lượn (vẽ hình học, không dùng ảnh)
+      for (const f of flutter) {
+        f.ph += f.sp * 0.016;
+        const fx = f.x + Math.sin(f.ph * 1.7) * f.amp;
+        const fy = f.y + Math.cos(f.ph * 1.1) * f.amp * 0.55;
+        const wing = 0.45 + 0.55 * Math.abs(Math.sin(f.ph * 7));
+        ctx.globalAlpha = 0.85;
+        if (f.kind === "bee") {
+          ctx.fillStyle = "#ffcf4d";
+          ctx.beginPath();
+          ctx.ellipse(fx, fy, f.size * 0.36, f.size * 0.26, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(60,40,10,0.75)";
+          ctx.beginPath();
+          ctx.ellipse(fx + f.size * 0.08, fy, f.size * 0.1, f.size * 0.24, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.55)";
+          ctx.beginPath();
+          ctx.ellipse(fx - f.size * 0.1, fy - f.size * 0.22, f.size * 0.22 * wing, f.size * 0.1, -0.5, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = f.hue;
+          for (const side of [-1, 1]) {
+            ctx.beginPath();
+            ctx.ellipse(
+              fx + side * f.size * 0.3 * wing,
+              fy,
+              f.size * 0.34 * wing,
+              f.size * 0.28,
+              side * 0.5,
+              0,
+              Math.PI * 2
+            );
+            ctx.fill();
+          }
+          ctx.fillStyle = "rgba(80,50,20,0.7)";
+          ctx.beginPath();
+          ctx.ellipse(fx, fy, f.size * 0.07, f.size * 0.24, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
     };
