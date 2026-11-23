@@ -81,6 +81,52 @@ export default function BossVfxCanvas({
     stateRef.current = { skill, danger, lane, holding, enraged, eyeCoords, mouthCoord };
   }, [skill, danger, lane, holding, enraged, eyeCoords, mouthCoord]);
 
+  /**
+   * Mắt nào bắn tia cho làn nào: chọn mắt GẦN làn đó nhất để tia không bị
+   * bắt chéo nhau (trước đây ghép cặp theo thứ tự => tia rối, khó đọc).
+   * Trả về mảng mắt (theo từng làn nguy hiểm) + có dùng chung 1 mắt không.
+   */
+  const pickEyesForLanes = (
+    eyes: { x: number; y: number }[],
+    lanes: number[],
+    w: number
+  ): { eye: { x: number; y: number }; shared: boolean }[] => {
+    if (eyes.length === 0) return lanes.map(() => ({ eye: { x: w / 2, y: 0 }, shared: false }));
+    if (lanes.length <= eyes.length) {
+      // Gán mắt gần nhất cho từng làn (greedy, không trùng mắt khi đủ mắt).
+      const used = new Set<number>();
+      return lanes.map((dl) => {
+        const tx = w * LANE_X[dl];
+        let best = 0;
+        let bestD = Infinity;
+        for (let i = 0; i < eyes.length; i++) {
+          if (used.has(i)) continue;
+          const d = Math.abs(eyes[i].x - tx);
+          if (d < bestD) {
+            bestD = d;
+            best = i;
+          }
+        }
+        used.add(best);
+        return { eye: eyes[best], shared: false };
+      });
+    }
+    // Nhiều làn hơn số mắt => dùng chung mắt gần nhất.
+    return lanes.map((dl) => {
+      const tx = w * LANE_X[dl];
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < eyes.length; i++) {
+        const d = Math.abs(eyes[i].x - tx);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      return { eye: eyes[best], shared: true };
+    });
+  };
+
   // Tính toạ độ pixel tương đối của Boss dựa trên CSS:
   // bottom: 19%, height: min(78svh, 118vw), aspectRatio: 768/1376, centered horizontally
   const getBossPoints = (w: number, h: number, eyes: [number, number][], mouth: [number, number]) => {
@@ -365,11 +411,42 @@ export default function BossVfxCanvas({
           const isTele = st.skill.mode === "telegraph";
           const isActive = st.skill.mode === "active";
 
+          const eyeAssign = pickEyesForLanes(pts.eyes, st.danger, w);
+
+          // ---- Năng lượng hội tụ ở mắt boss (chỉ khi đang ngắm) ----
+          {
+            const charge = isActive ? 1 : 0.4 + 0.35 * Math.sin(now * 0.012);
+            const seen = new Set<string>();
+            for (const a of eyeAssign) {
+              const key = `${Math.round(a.eye.x)},${Math.round(a.eye.y)}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              const r = (18 + charge * 26) * (Math.min(w, h) / 900 + 0.5);
+              const g = ctx.createRadialGradient(a.eye.x, a.eye.y, 0, a.eye.x, a.eye.y, r * 2.1);
+              g.addColorStop(0, "rgba(255,255,255,0.95)");
+              g.addColorStop(0.3, isJudgment ? "rgba(232,121,249,0.75)" : "rgba(255,110,50,0.7)");
+              g.addColorStop(1, "rgba(0,0,0,0)");
+              ctx.save();
+              ctx.globalCompositeOperation = "lighter";
+              ctx.fillStyle = g;
+              ctx.beginPath();
+              ctx.arc(a.eye.x, a.eye.y, r * 2.1, 0, Math.PI * 2);
+              ctx.fill();
+              // vòng xoáy nhỏ quanh mắt
+              ctx.beginPath();
+              ctx.arc(a.eye.x, a.eye.y, r * 0.85, now * 0.004, now * 0.004 + Math.PI * 1.25);
+              ctx.strokeStyle = isJudgment ? "rgba(240,171,252,0.85)" : "rgba(255,190,120,0.85)";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+
           for (let idx = 0; idx < st.danger.length; idx++) {
             const dl = st.danger[idx];
             const tx = w * LANE_X[dl];
             const ty = h * 0.9;
-            const eye = pts.eyes[idx % pts.eyes.length];
+            const eye = eyeAssign[idx].eye;
 
             // Vòng tròn ấn ký dưới làn nguy hiểm
             ctx.save();
@@ -411,18 +488,27 @@ export default function BossVfxCanvas({
               ctx.restore();
             } else if (isActive) {
               // Tia laser plasma khổng lồ
-              const beamW = Math.min(w * 0.14, 72) + Math.sin(now * 0.04) * 6;
+              const beamW = Math.min(w * 0.14, 72) + Math.sin(now * 0.04 + idx) * 6;
+
+              // Mỗi làn một sắc thái riêng để người chơi phân biệt tức thì
+              // (TRÁI = lửa cam · GIỮA = trắng-xanh · PHẢI = đỏ tía).
+              const palette = isJudgment
+                ? [
+                    { core: "rgba(255,255,255,0.96)", mid: "rgba(232,121,249,0.85)", tail: "rgba(192,38,211,0.55)" },
+                    { core: "rgba(255,255,255,0.98)", mid: "rgba(216,110,255,0.9)", tail: "rgba(255,40,90,0.55)" },
+                    { core: "rgba(255,255,255,0.96)", mid: "rgba(255,120,230,0.85)", tail: "rgba(120,20,220,0.55)" },
+                  ][dl] ?? { core: "#fff", mid: "rgba(220,70,255,0.75)", tail: "rgba(255,40,90,0.5)" }
+                : [
+                    { core: "rgba(255,255,255,0.98)", mid: "rgba(255,150,60,0.88)", tail: "rgba(255,80,10,0.55)" },
+                    { core: "rgba(255,255,255,0.99)", mid: "rgba(255,225,150,0.9)", tail: "rgba(255,110,40,0.5)" },
+                    { core: "rgba(255,255,255,0.97)", mid: "rgba(255,70,45,0.9)", tail: "rgba(200,0,40,0.55)" },
+                  ][dl] ?? { core: "#fff", mid: "rgba(255,110,40,0.85)", tail: "rgba(255,20,20,0.55)" };
+
               ctx.save();
               const grad = ctx.createLinearGradient(eye.x, eye.y, tx, ty);
-              if (isJudgment) {
-                grad.addColorStop(0, "rgba(255,255,255,0.95)");
-                grad.addColorStop(0.3, "rgba(220,70,255,0.75)");
-                grad.addColorStop(1, "rgba(255,40,90,0.5)");
-              } else {
-                grad.addColorStop(0, "rgba(255,255,255,0.98)");
-                grad.addColorStop(0.25, "rgba(255,110,40,0.85)");
-                grad.addColorStop(1, "rgba(255,20,20,0.55)");
-              }
+              grad.addColorStop(0, palette.core);
+              grad.addColorStop(0.28, palette.mid);
+              grad.addColorStop(1, palette.tail);
 
               // Outer halo
               ctx.beginPath();
@@ -451,6 +537,48 @@ export default function BossVfxCanvas({
               ctx.shadowColor = isJudgment ? "#e879f9" : "#ff6b3d";
               ctx.shadowBlur = 24 * GLOW;
               ctx.stroke();
+
+              // ---- Tia phụ song song (tạo cảm giác beam "dày, nhiều lớp") ----
+              const off = beamW * 0.22;
+              ctx.beginPath();
+              ctx.moveTo(eye.x, eye.y);
+              ctx.lineTo(tx - off, ty);
+              ctx.moveTo(eye.x, eye.y);
+              ctx.lineTo(tx + off, ty);
+              ctx.strokeStyle = palette.mid;
+              ctx.lineWidth = 1.6;
+              ctx.shadowBlur = 0;
+              ctx.stroke();
+
+              // ---- Xoáy năng lượng chạy dọc tia (2 luồng ngược chiều) ----
+              const t0 = (now * 0.0016 + idx * 0.33) % 1;
+              for (let k = 0; k < 2; k++) {
+                const p = (t0 + k * 0.5) % 1;
+                const eyeX = eye.x + (tx - eye.x) * p;
+                const eyeY = eye.y + (ty - eye.y) * p;
+                const swirl = Math.sin(p * 12 + now * 0.01 + idx) * beamW * 0.34;
+                ctx.beginPath();
+                ctx.arc(eyeX + swirl, eyeY, 2.2 + 2.6 * Math.sin(p * Math.PI), 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255,255,255,0.9)";
+                ctx.fill();
+              }
+              ctx.restore();
+
+              // ---- Cột sáng dọc tại điểm chạm sàn (lan toả) ----
+              const colH = Math.min(h * 0.22, 170);
+              const colGrad = ctx.createLinearGradient(tx, ty, tx, ty - colH);
+              colGrad.addColorStop(0, palette.mid);
+              colGrad.addColorStop(1, "rgba(0,0,0,0)");
+              ctx.save();
+              ctx.globalAlpha = 0.5 + pulse * 0.35;
+              ctx.fillStyle = colGrad;
+              ctx.beginPath();
+              ctx.moveTo(tx - beamW * 0.42, ty);
+              ctx.lineTo(tx + beamW * 0.42, ty);
+              ctx.lineTo(tx + beamW * 0.12, ty - colH);
+              ctx.lineTo(tx - beamW * 0.12, ty - colH);
+              ctx.closePath();
+              ctx.fill();
               ctx.restore();
 
               // Tia sét xoắn quanh tia sáng

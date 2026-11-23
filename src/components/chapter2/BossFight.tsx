@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import { createFrameLoop } from "../../utils/perf";
 import { avatar, bossArena, bossEnrage, bossIdle, heroKneel, heroStand } from "./assets";
@@ -6,6 +6,93 @@ import { PlayerBehaviorTracker, type PredictionSnapshot, type SkillKind } from "
 import BossVfxCanvas, { type VfxBurst } from "./BossVfxCanvas";
 
 export const BOSS_MAX_HP = 360;
+
+/**
+ * Kho dự đoán AI (useSyncExternalStore): khi mô hình cập nhật, chỉ HUD đọc vị
+ * re-render — thay vì re-render toàn bộ BossFight (boss, canvas VFX, làn, HUD).
+ */
+let predSnap: PredictionSnapshot | null = null;
+const predSubs = new Set<() => void>();
+function publish(snap: PredictionSnapshot) {
+  predSnap = snap;
+  predSubs.forEach((f) => f());
+}
+function usePredictionStore(): PredictionSnapshot | null {
+  return useSyncExternalStore(
+    (cb) => {
+      predSubs.add(cb);
+      return () => predSubs.delete(cb);
+    },
+    () => predSnap,
+    () => predSnap
+  );
+}
+
+/** HUD đọc vị: chỉ mình nó re-render khi AI cập nhật. */
+const PredictionHud = memo(function PredictionHud({ dangerLanes }: { dangerLanes: number[] }) {
+  const prediction = usePredictionStore();
+  if (!prediction) return null;
+  return (
+    <>
+      <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200 backdrop-blur-sm sm:text-[8px]">
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            prediction.warmedUp && prediction.adaptRate >= 60 ? "animate-ping bg-red-400" : "bg-violet-400"
+          }`}
+        />
+        <span>
+          {prediction.warmedUp
+            ? `ML ĐỌC VỊ ${prediction.adaptRate}% · MẪU ${prediction.samples}`
+            : `ML THU THẬP ${prediction.samples}/3`}
+        </span>
+        {prediction.accuracy > 0 && <span className="text-emerald-300/90">· ĐÚNG {prediction.accuracy}%</span>}
+        {dangerLanes.length > 0 && (
+          <span className="border border-red-400/40 bg-red-950/60 px-1 text-red-200">{shapeLabel(dangerLanes)}</span>
+        )}
+        <span className="hidden text-violet-300/65 sm:inline">· {prediction.reason}</span>
+        {prediction.warmedUp && (
+          <span className="text-amber-300">
+            [{LANE_NAMES[prediction.predictedLane]} {Math.round(prediction.probs[prediction.predictedLane] * 100)}%]
+          </span>
+        )}
+        {prediction.geminiStatus !== "off" && (
+          <span
+            title={prediction.geminiStatus === "error" ? prediction.geminiError : undefined}
+            className={`rounded-sm px-1 py-px text-[6.5px] sm:text-[7px] ${
+              prediction.geminiStatus === "active"
+                ? "border border-cyan-400/50 bg-cyan-950/60 text-cyan-200"
+                : prediction.geminiStatus === "syncing"
+                ? "animate-pulse border border-sky-400/40 bg-sky-950/60 text-sky-200"
+                : prediction.geminiStatus === "error"
+                ? "border border-red-400/40 bg-red-950/60 text-red-300"
+                : "border border-sky-500/30 bg-sky-950/40 text-sky-300/80"
+            }`}
+          >
+            {prediction.geminiStatus === "active"
+              ? "+ GEMINI"
+              : prediction.geminiStatus === "syncing"
+              ? "GEMINI…"
+              : prediction.geminiStatus === "error"
+              ? "GEMINI LỖI (XEM KEY)"
+              : "GEMINI SẴN SÀNG"}
+          </span>
+        )}
+      </div>
+      {prediction.geminiTaunt && (
+        <div className="mt-0.5 hidden truncate font-sys text-[8px] tracking-[0.12em] text-cyan-200/85 sm:block">
+          “{prediction.geminiTaunt}”
+        </div>
+      )}
+    </>
+  );
+});
+
+/** Nhãn ngắn cho đội hình đòn đánh (dùng trong thẻ chỉ báo). */
+function shapeLabel(lanes: number[]): string {
+  if (lanes.length === 1) return "1 TIA";
+  if (lanes.length === 3) return "TOÀN SÀN";
+  return lanes.join(",") === "0,2" ? "2 TIA HAI BÊN" : "2 TIA SÁT";
+}
 const BAR_HP = 120;
 const LANE_X = [17, 50, 83];
 const LANE_NAMES = ["TRÁI", "GIỮA", "PHẢI"];
@@ -124,7 +211,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   const [durs, setDurs] = useState({ tele: 860, active: 1400 });
   const trackerRef = useRef<PlayerBehaviorTracker | null>(null);
   if (!trackerRef.current) trackerRef.current = new PlayerBehaviorTracker(true);
-  const [prediction, setPrediction] = useState<PredictionSnapshot>(() => trackerRef.current!.predict(1));
+  const predRef = useRef<PredictionSnapshot>(trackerRef.current!.predict(1));
+  const setPrediction = useCallback((snap: PredictionSnapshot) => {
+    predRef.current = snap;
+    publish(snap);
+  }, []);
   const [vfxBurst, setVfxBurst] = useState<VfxBurst | null>(null);
   const [flashKey, setFlashKey] = useState(0);
   const [redKey, setRedKey] = useState(0);
@@ -330,6 +421,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
       }
 
       const tracker = trackerRef.current!;
+      tracker.beginBattle();
       while (alive()) {
         const stage: 1 | 2 | 3 = seqHp > 240 ? 1 : seqHp > 120 ? 2 : 3;
         const speed = tracker.getSpeedMultiplier(stage);
@@ -350,7 +442,15 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         const fistShift = kind === "fist" ? tracker.getFistTimingShift() : 0;
 
         if (kind === "gaze" || kind === "judgment") {
-          const picked = tracker.pickTargetedLanes(laneRef.current, 2, stage === 1 ? 0.72 : 0.88);
+          // Đội hình phạt: 2 tia sát nhau HOẶC 2 tia hai bên (nhiều khả năng hơn).
+          // TUYỆT ĐỐI không dùng 3 tia cùng lúc: người chơi chỉ có 3 làn nên
+          // "toàn sàn" = chắc chắn mất máu, không phải thử thách.
+          const picked = tracker.pickTargetedLanes(
+            laneRef.current,
+            2,
+            stage === 1 ? 0.72 : 0.88,
+            { wave: stage * 3, allowSplit: true, allowFull: false }
+          );
           dLanes = picked.lanes;
           snap = picked.predicted;
           aiLocked = picked.aiUsed;
@@ -379,7 +479,11 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         if (kind === "gaze" && stage === 3 && snap.warmedUp && Math.random() < 0.45) {
           if (!(await wait(Math.round(teleMs * 0.58)))) return;
           if (!dLanes.includes(laneRef.current)) {
-            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92);
+            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92, {
+              wave: 9,
+              allowSplit: true,
+              allowFull: false,
+            });
             dLanes = retarget.lanes;
             setDanger(dLanes);
             setPrediction(retarget.predicted);
@@ -391,7 +495,8 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
             if (!(await wait(Math.round(teleMs * 0.42)))) return;
           }
         } else {
-          if (!(await wait(teleMs))) return;
+          // 3 tia => kéo dài cảnh báo để người chơi kịp đọc đội hình
+          if (!(await wait(dLanes.length >= 3 ? Math.round(teleMs * 1.28) : teleMs))) return;
         }
 
         setSkill({ kind, id, mode: "active", aiLocked });
@@ -578,6 +683,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
   }, [bossControls, onDamage, onHeal, onProgress, onVictory, sceneShake, setHold, shake, showFb, triggerBurst]);
 
   const stage = bossHp > 240 ? 1 : bossHp > 120 ? 2 : 3;
+  const currentPred = usePredictionStore();
   const form = enraged ? BOSS_FORMS.rage : BOSS_FORMS.calm;
   const activeSkill = skill && skill.mode !== "telegraph" ? skill : null;
   const info = skill ? SKILL_INFO[skill.kind] : null;
@@ -671,6 +777,57 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                   : "radial-gradient(ellipse, rgba(70,155,255,.38), rgba(75,40,170,.2) 55%, transparent 74%)",
               }}
             />
+
+            {/* Vòng rune bay quanh boss — tăng dần theo pha */}
+            <div className="pointer-events-none absolute inset-0">
+              <div
+                className="rune-spin absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border"
+                style={{
+                  width: "min(66vh, 96vw)",
+                  height: "min(66vh, 96vw)",
+                  borderColor: enraged ? "rgba(255,70,40,.28)" : "rgba(90,170,255,.24)",
+                  boxShadow: enraged
+                    ? "inset 0 0 60px rgba(255,40,20,.18)"
+                    : "inset 0 0 60px rgba(70,150,255,.16)",
+                  borderStyle: stage === 3 ? "dashed" : "solid",
+                }}
+              />
+              <div
+                className="rune-spin-rev absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dotted"
+                style={{
+                  width: "min(48vh, 72vw)",
+                  height: "min(48vh, 72vw)",
+                  borderColor: enraged ? "rgba(255,190,80,.35)" : "rgba(168,85,255,.3)",
+                }}
+              />
+              {stage >= 2 && (
+                <div
+                  className="rune-spin absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border"
+                  style={{
+                    width: "min(34vh, 52vw)",
+                    height: "min(34vh, 52vw)",
+                    borderColor: "rgba(255,45,107,.3)",
+                    animationDuration: "14s",
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Vết nứt năng lượng trên tượng (chỉ pha cuồng nộ) */}
+            {enraged && (
+              <div
+                className="pointer-events-none absolute inset-0 mix-blend-screen"
+                style={{
+                  background:
+                    "linear-gradient(118deg, transparent 44%, rgba(255,90,40,.55) 47%, transparent 49%), linear-gradient(62deg, transparent 58%, rgba(255,190,90,.5) 60%, transparent 62%), linear-gradient(35deg, transparent 30%, rgba(255,60,20,.4) 32%, transparent 34%)",
+                  opacity: 0.5,
+                  filter: "blur(1px)",
+                  maskImage: "linear-gradient(to bottom, transparent 8%, #000 30%, #000 78%, transparent 96%)",
+                  WebkitMaskImage:
+                    "linear-gradient(to bottom, transparent 8%, #000 30%, #000 78%, transparent 96%)",
+                }}
+              />
+            )}
             <img
               src={enraged ? bossEnrage : bossIdle}
               alt="Tượng thần mỉm cười"
@@ -690,33 +847,81 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 transition: "filter 2s ease",
               }}
             />
-            {/* mắt phát sáng */}
-            {form.eyes.map(([ex, ey], i) => (
-              <div
-                key={i}
-                className={`absolute rounded-full mix-blend-screen ${activeSkill ? "" : "eye-burn"}`}
-                style={{
-                  left: `${ex}%`,
-                  top: `${ey}%`,
-                  width: skill?.kind === "gaze" || skill?.kind === "judgment" ? "15%" : "8%",
-                  height: skill?.kind === "gaze" || skill?.kind === "judgment" ? "3.2%" : "2.1%",
-                  transform: "translate(-50%,-50%)",
-                  background:
-                    skill?.kind === "judgment"
-                      ? "radial-gradient(ellipse, #fff 0%, #d946ef 35%, rgba(180,30,255,.5) 60%, transparent 80%)"
-                      : skill?.kind === "gaze"
-                      ? "radial-gradient(ellipse, #fff 0%, rgba(255,80,40,1) 30%, rgba(255,0,0,.55) 55%, transparent 78%)"
-                      : "radial-gradient(ellipse, rgba(255,95,60,1), rgba(255,20,20,.65) 42%, transparent 76%)",
-                  boxShadow:
-                    skill?.kind === "gaze" || skill?.kind === "judgment"
-                      ? "0 0 55px 16px rgba(255,50,20,.9)"
-                      : "0 0 24px 6px rgba(255,40,20,.55)",
-                  filter: "blur(1px)",
-                  transition: "all .28s",
-                }}
-              />
-            ))}
-            {/* miệng cười */}
+            {/* mắt phát sáng: 3 lớp = quầng xa · lõi · đồng tử + vệt nứt năng lượng */}
+            {form.eyes.map(([ex, ey], i) => {
+              const aiming = skill?.kind === "gaze" || skill?.kind === "judgment";
+              const judging = skill?.kind === "judgment";
+              const tint = judging ? "216,70,239" : "255,70,30";
+              return (
+                <div key={i} className="pointer-events-none absolute inset-0">
+                  {/* quầng xa */}
+                  <div
+                    className={`absolute rounded-full mix-blend-screen ${activeSkill ? "" : "eye-burn"}`}
+                    style={{
+                      left: `${ex}%`,
+                      top: `${ey}%`,
+                      width: aiming ? "26%" : "17%",
+                      height: aiming ? "14%" : "11%",
+                      transform: "translate(-50%,-50%)",
+                      background: `radial-gradient(ellipse, rgba(${tint},0.95) 0%, rgba(${tint},0.45) 28%, rgba(${tint},0) 70%)`,
+                      filter: "blur(9px)",
+                      opacity: aiming ? 1 : 0.7,
+                      transition: "all .3s ease",
+                    }}
+                  />
+                  {/* thân mắt */}
+                  <div
+                    className={`absolute rounded-full mix-blend-screen ${activeSkill ? "" : "eye-burn"}`}
+                    style={{
+                      left: `${ex}%`,
+                      top: `${ey}%`,
+                      width: aiming ? "15%" : "8%",
+                      height: aiming ? "3.2%" : "2.1%",
+                      transform: "translate(-50%,-50%)",
+                      background: judging
+                        ? "radial-gradient(ellipse, #fff 0%, #d946ef 35%, rgba(180,30,255,.5) 60%, transparent 80%)"
+                        : skill?.kind === "gaze"
+                        ? "radial-gradient(ellipse, #fff 0%, rgba(255,80,40,1) 30%, rgba(255,0,0,.55) 55%, transparent 78%)"
+                        : "radial-gradient(ellipse, rgba(255,95,60,1), rgba(255,20,20,.65) 42%, transparent 76%)",
+                      boxShadow: aiming ? `0 0 55px 16px rgba(${tint},.9)` : `0 0 24px 6px rgba(${tint},.55)`,
+                      filter: "blur(1px)",
+                      transition: "all .28s",
+                    }}
+                  />
+                  {/* đồng tử dọc (mắt rắn) — chỉ hiện rõ khi ngắm */}
+                  <div
+                    className="absolute rounded-full bg-white mix-blend-screen"
+                    style={{
+                      left: `${ex}%`,
+                      top: `${ey}%`,
+                      width: aiming ? "1.6%" : "1%",
+                      height: aiming ? "7%" : "4%",
+                      transform: "translate(-50%,-50%)",
+                      opacity: aiming ? 0.95 : 0.35,
+                      filter: "blur(2px)",
+                      transition: "all .3s ease",
+                    }}
+                  />
+                  {/* vệt nứt năng lượng toả ra khi đang chiếu */}
+                  {aiming && (
+                    <div
+                      className="absolute rounded-full mix-blend-screen"
+                      style={{
+                        left: `${ex}%`,
+                        top: `${ey}%`,
+                        width: "34%",
+                        height: "20%",
+                        transform: "translate(-50%,-50%)",
+                        background: `conic-gradient(from ${i * 90}deg, rgba(${tint},0.5), transparent 32%, rgba(${tint},0.35) 55%, transparent 78%)`,
+                        filter: "blur(6px)",
+                        opacity: 0.55,
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
+            {/* miệng cười + sóng âm khi gầm */}
             <div
               className="absolute rounded-full mix-blend-screen"
               style={{
@@ -733,6 +938,22 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
                 transition: "all .35s",
               }}
             />
+            {skill?.kind === "laugh" && (
+              <div
+                className="pointer-events-none absolute rounded-full mix-blend-screen"
+                style={{
+                  left: `${form.mouth[0]}%`,
+                  top: `${form.mouth[1]}%`,
+                  width: skill.mode === "active" ? "70%" : "34%",
+                  height: skill.mode === "active" ? "34%" : "16%",
+                  transform: "translate(-50%,-50%)",
+                  background:
+                    "radial-gradient(ellipse, rgba(255,190,90,.18) 0%, rgba(255,90,40,.22) 42%, transparent 72%)",
+                  filter: "blur(14px)",
+                  transition: "all .4s ease",
+                }}
+              />
+            )}
           </motion.div>
         </motion.div>
 
@@ -740,7 +961,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
         {(skill?.kind === "gaze" || (skill?.kind === "judgment" && skill.mode !== "counter")) &&
           [0, 1, 2].map((i) => {
             const isDanger = danger.includes(i);
-            const isPred = prediction.predictedLane === i && prediction.confidence >= 0.48;
+            const isPred = currentPred?.predictedLane === i && currentPred.confidence >= 0.48;
             return (
               <div
                 key={`floor-${i}`}
@@ -904,54 +1125,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
               <span>{Math.max(0, bossHp)} / {BOSS_MAX_HP}</span>
             </div>
             {/* Chỉ báo ML + Gemini đọc vị trực tuyến */}
-            <div className="mt-1 inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200 backdrop-blur-sm sm:text-[8px]">
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  prediction.warmedUp && prediction.adaptRate >= 60 ? "animate-ping bg-red-400" : "bg-violet-400"
-                }`}
-              />
-              <span>
-                {prediction.warmedUp
-                  ? `ML ĐỌC VỊ ${prediction.adaptRate}% · MẪU ${prediction.samples}`
-                  : `ML THU THẬP ${prediction.samples}/3`}
-              </span>
-              {prediction.accuracy > 0 && (
-                <span className="text-emerald-300/90">· ĐÚNG {prediction.accuracy}%</span>
-              )}
-              <span className="hidden text-violet-300/65 sm:inline">· {prediction.reason}</span>
-              {prediction.warmedUp && (
-                <span className="text-amber-300">
-                  [{LANE_NAMES[prediction.predictedLane]} {Math.round(prediction.probs[prediction.predictedLane] * 100)}%]
-                </span>
-              )}
-              {prediction.geminiStatus !== "off" && (
-                <span
-                  title={prediction.geminiStatus === "error" ? prediction.geminiError : undefined}
-                  className={`rounded-sm px-1 py-px text-[6.5px] sm:text-[7px] ${
-                    prediction.geminiStatus === "active"
-                      ? "border border-cyan-400/50 bg-cyan-950/60 text-cyan-200"
-                      : prediction.geminiStatus === "syncing"
-                      ? "animate-pulse border border-sky-400/40 bg-sky-950/60 text-sky-200"
-                      : prediction.geminiStatus === "error"
-                      ? "border border-red-400/40 bg-red-950/60 text-red-300"
-                      : "border border-sky-500/30 bg-sky-950/40 text-sky-300/80"
-                  }`}
-                >
-                  {prediction.geminiStatus === "active"
-                    ? "+ GEMINI"
-                    : prediction.geminiStatus === "syncing"
-                    ? "GEMINI…"
-                    : prediction.geminiStatus === "error"
-                    ? "GEMINI LỖI (XEM KEY)"
-                    : "GEMINI SẴN SÀNG"}
-                </span>
-              )}
-            </div>
-            {prediction.geminiTaunt && (
-              <div className="mt-0.5 hidden truncate font-sys text-[8px] tracking-[0.12em] text-cyan-200/85 sm:block">
-                “{prediction.geminiTaunt}”
-              </div>
-            )}
+            <PredictionHud dangerLanes={danger} />
           </div>
 
           {/* combo */}

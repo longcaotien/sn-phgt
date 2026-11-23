@@ -11,9 +11,12 @@ Website sinh nhật Solo Leveling (React + Vite + Tailwind), deploy lên GitHub 
 3. **Chương II · HỒNG NGỤC** — thử thách 3 tượng thần:
    - Cầu nguyện (giữ `Space` / giữ nút).
    - Không ngẩng đầu khi tượng thần nhìn xuống.
-   - Né 12 đợt trừng phạt qua 3 làn.
+   - Né 12 đợt trừng phạt qua 3 làn với **4 đội hình**: 1 tia · 2 tia sát nhau ·
+     **2 tia hai bên** (bỏ trống làn giữa) · **ĐỢT KÉP** (đợt 9-12: né nhịp 1,
+     rồi bị đánh đúng làn vừa chạy tới nên phải né tiếp nhịp 2).
 4. **BOSS CUỐI · TƯỢNG THẦN MỈM CƯỜI (cấp SSS)** — 3 thanh máu, 3 kỹ năng đặc biệt, 2 lần chuyển pha:
-   - `TRỪNG PHẠT · NHÌN THẲNG` → di chuyển sang làn an toàn (`←/→`, `A/D`, chạm làn).
+   - `TRỪNG PHẠT · NHÌN THẲNG` → di chuyển sang làn an toàn (`←/→`, `A/D`, chạm làn);
+     tia bắn từ **mắt gần làn đó nhất**, mỗi làn một sắc màu riêng.
    - `CUỒNG TIẾNG CƯỜI` → **giữ** để chịu đòn và nạp nội lực (`Space` / giữ nút).
    - `NẮM ĐẤM THẦN` → **nhấn đúng nhịp** phản công (`Space` / chạm).
    - Pha 2 (còn 2 thanh máu): boss cuồng nộ, đổi hình, tăng tốc.
@@ -52,6 +55,34 @@ Workflow `.github/workflows/deploy.yml` tự động build + deploy mỗi khi pu
 - Build xuất ra `dist/index.html` + `dist/assets/*` (JS/CSS/ảnh tách riêng, có hash).
 - `public/.nojekyll` đảm bảo GitHub Pages không xử lý file bằng Jekyll.
 - `server.allowedHosts = true` chỉ phục vụ môi trường preview của sandbox (dev), không ảnh hưởng bản build.
+
+## Hệ thống đọc vị & đội hình đòn đánh
+
+`src/components/chapter2/bossAI.ts` · lớp `PlayerBehaviorTracker`
+
+**Mô hình dự đoán** (kết hợp 4 nguồn):
+1. Softmax tuyến tính trên 10 đặc trưng (làn hiện tại, hướng né trước, tần suất làn, chu kỳ đảo làn…),
+2. Markov bậc 2 (bigram `làn trước → làn hiện tại → làn kế`),
+3. Thiên hướng né theo từng chiêu (`skillDodge`),
+4. Gemini API (tuỳ chọn, chạy nền).
+
+**Chọn đội hình** (`pickTargetedLanes`): trước đây chỉ có 3 kiểu cố định
+(`[0,1]`, `[1,2]`, `[0,2]` chọn ngẫu nhiên) nên người chơi luôn thấy 2 tia sát
+nhau và rất dễ đoán. Nay là **bảng khuôn mẫu có trọng số**:
+
+| Khuôn mẫu | Mở từ | Ghi chú |
+| --- | --- | --- |
+| `L0/L1/L2` (1 tia) | đợt 1 | |
+| `ADJ_L` `[0,1]`, `ADJ_R` `[1,2]` | đợt 3 | 2 tia sát nhau |
+| `SPLIT` `[0,2]` | đợt 3 | **2 tia hai bên** — trước đây không bao giờ xuất hiện |
+| `DOUBLE` | đợt 9 | đợt kép 2 nhịp, luôn còn đúng 1 làn sống |
+
+Trọng số bị điều chỉnh bởi: khuôn mẫu vừa dùng (giảm 82%), lặp liên tiếp,
+khuôn mẫu chưa từng xuất hiện trong trận (×1.35), và **đọc vị** — khuôn mẫu nào
+phủ đúng làn AI dự đoán người chơi sẽ chạy tới thì được cộng điểm.
+
+> Quy tắc công bằng: **không bao giờ** đánh cả 3 làn cùng lúc. Mô phỏng 6000 đợt
+> cho 0 tình huống bất khả thi; tỉ lệ "2 tia hai bên" ≈ 27% (màn né) / 34% (boss).
 
 ## Tối ưu hiệu năng (kiến trúc)
 

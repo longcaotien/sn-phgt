@@ -92,6 +92,10 @@ export class PlayerBehaviorTracker {
   private reactionSamples: number[] = [];
   private fistTimingOffsets: number[] = [];
   private lastDangerKey = "";
+  /** Vài khuôn mẫu tấn công gần nhất (chuỗi id khuôn mẫu theo thời gian) */
+  private patternHistory: string[] = [];
+  /** Đã dùng những khuôn mẫu nào trong trận này (để ưu tiên cái mới) */
+  private usedPatterns = new Set<string>();
   private activeSkillContext: SkillKind | null = null;
   private geminiTactic: GeminiTactic | null = null;
   private geminiStatus: GeminiStatus = hasGeminiApiKey() ? "ready" : "off";
@@ -107,6 +111,13 @@ export class PlayerBehaviorTracker {
 
   setSkillContext(kind: SkillKind | null) {
     this.activeSkillContext = kind;
+  }
+
+  /** Bắt đầu trận mới: quên các khuôn mẫu tấn công đã dùng để boss đa dạng lại. */
+  beginBattle() {
+    this.patternHistory = [];
+    this.usedPatterns.clear();
+    this.lastDangerKey = "";
   }
 
   refreshGeminiState() {
@@ -479,46 +490,150 @@ export class PlayerBehaviorTracker {
 
   /**
    * Chọn làn nguy hiểm.
-   * - Khi chưa đủ mẫu (warmedUp === false): bốc ngẫu nhiên thực sự và tránh lặp cặp cũ.
-   * - Khi mô hình đã học (>= 3 mẫu): khóa làn hiện tại + làn dự đoán cao nhất.
+   *
+   * Trước đây chỉ có 3 kiểu: [0,1], [1,2], [0,2] => người chơi luôn gặp
+   * "2 tia sát nhau", không bao giờ có 2 tia hai bên (0 & 2) và rất dễ đoán.
+   *
+   * Nay dùng bộ KHUÔN MẪU TẤN CÔNG có trọng số, đủ 6 kiểu đội hình:
+   *   LANE (1 tia)  ·  PAIR_ADJ (2 tia sát: TRÁI+GIỮA, GIỮA+PHẢI)
+   *   SPLIT (2 tia hai bên: TRÁI+PHẢI)  ·  FULL (cả 3 làn — chỉ từ đợt 7)
+   * Trọng số thay đổi theo (a) độ khó/đợt, (b) pha boss, (c) việc khuôn mẫu
+   * đó đã xuất hiện gần đây chưa, và (d) dự đoán của AI: khuôn mẫu nào
+   * "khóa" được làn người chơi sắp tới sẽ được ưu tiên (đọc vị).
    */
   pickTargetedLanes(
     currentLane: number,
-    dangerCount: 1 | 2,
-    adaptiveChance = 0.8
-  ): { lanes: number[]; predicted: PredictionSnapshot; aiUsed: boolean } {
+    dangerCount: 1 | 2 | 3,
+    adaptiveChance = 0.8,
+    opts: { wave?: number; allowSplit?: boolean; allowFull?: boolean } = {}
+  ): { lanes: number[]; predicted: PredictionSnapshot; aiUsed: boolean; pattern: string } {
+    const snap = this.predict(currentLane);
+    const canAdapt = snap.warmedUp && Math.random() < adaptiveChance;
+    const allowSplit = opts.allowSplit ?? true;
+    const allowFull = opts.allowFull ?? false;
+    const wave = opts.wave ?? 0;
+
+    // Làn "nguy hiểm" ưu tiên: làn người chơi đang đứng + làn AI đoán họ sẽ né tới.
+    const likely: number[] = [];
+    if (canAdapt) {
+      likely.push(currentLane);
+      const probs = snap.probs;
+      const ranked = [0, 1, 2].sort((a, b) => probs[b] - probs[a]);
+      for (const l of ranked) {
+        if (!likely.includes(l) && probs[l] >= 0.28) likely.push(l);
+      }
+    }
+
+    // ---------- Bảng khuôn mẫu ----------
+    type Pattern = {
+      id: string;
+      lanes: number[];
+      /* 0..1: mức ưu tiên cơ bản */
+      weight: number;
+    };
+
+    const patterns: Pattern[] = [];
+    const recent = this.patternHistory.slice(-2);
+
+    const push = (id: string, lanes: number[], weight: number) => {
+      let w = weight;
+      // Chống lặp: khuôn mẫu vừa dùng bị giảm mạnh trọng số.
+      if (this.lastDangerKey === lanes.join(",")) w *= 0.18;
+      if (recent[recent.length - 1] === id) w *= 0.45;
+      if (recent.length >= 2 && recent[recent.length - 1] === id && recent[recent.length - 2] === id) w *= 0.4;
+      // Ưu tiên khuôn mẫu chưa từng xuất hiện trong trận (đa dạng hoá).
+      if (!this.usedPatterns.has(id)) w *= 1.35;
+      if (w > 0) patterns.push({ id, lanes, weight: w });
+    };
+
+    // Đọc vị: cộng trọng số cho khuôn mẫu phủ được làn người chơi sắp tới.
+    const readBonus = (lanes: number[]) => {
+      if (!canAdapt) return 0;
+      let bonus = 0;
+      for (const l of likely) {
+        if (lanes.includes(l)) bonus += snap.probs[l] >= 0.3 ? 0.85 : 0.35;
+        // Khuôn mẫu để lộ đúng làn AI dự đoán => "bắt bài" rõ hơn.
+        if (l === snap.predictedLane && lanes.includes(l)) bonus += 0.4;
+      }
+      return bonus;
+    };
+
+    if (dangerCount === 1) {
+      for (const target of [0, 1, 2]) {
+        push(`L${target}`, [target], 1 + readBonus([target]));
+      }
+    } else {
+      // 2 tia sát nhau
+      push("ADJ_L", [0, 1], 1 + readBonus([0, 1]));
+      push("ADJ_R", [1, 2], 1 + readBonus([1, 2]));
+      // 2 tia hai bên (bỏ trống làn giữa) — trước đây KHÔNG hề xuất hiện.
+      if (allowSplit) push("SPLIT", [0, 2], (wave >= 2 ? 1.05 : 0.75) + readBonus([0, 2]));
+
+      if (dangerCount === 3 && allowFull) {
+        push("FULL", [0, 1, 2], 0.55 + readBonus([0, 1, 2]) * 0.5);
+      }
+    }
+
+    const total = patterns.reduce((a, p) => a + p.weight, 0) || 1;
+    let r = Math.random() * total;
+    let chosen = patterns[patterns.length - 1];
+    for (const p of patterns) {
+      r -= p.weight;
+      if (r <= 0) {
+        chosen = p;
+        break;
+      }
+    }
+
+    // Khuôn mẫu 2 tia nhưng bị trùng làn hiện tại => vẫn giữ (nguy hiểm thật),
+    // nhưng nếu là FULL mà người chơi đang ở làn giữa và luật chưa cho phép thì bỏ.
+    const lanes = [...chosen.lanes].sort((a, b) => a - b);
+    this.lastDangerKey = lanes.join(",");
+    this.patternHistory.push(chosen.id);
+    if (this.patternHistory.length > 6) this.patternHistory.shift();
+    this.usedPatterns.add(chosen.id);
+
+    return { lanes, predicted: snap, aiUsed: canAdapt, pattern: chosen.id };
+  }
+
+  /**
+   * ĐỢT KÉP: boss đánh 2 làn, buộc người chơi đứng ở làn còn lại — rồi lập tức
+   * đánh luôn làn đó, buộc né thêm lần nữa. Khó hơn nhưng luôn có đường sống
+   * (không giống "cả 3 tia cùng lúc" = chắc chắn trúng đòn).
+   */
+  pickDoubleStrike(
+    currentLane: number,
+    adaptiveChance = 0.85,
+    wave = 0
+  ): { first: number[]; second: number[]; predicted: PredictionSnapshot; aiUsed: boolean } {
     const snap = this.predict(currentLane);
     const canAdapt = snap.warmedUp && Math.random() < adaptiveChance;
 
-    if (dangerCount === 1) {
-      if (canAdapt) {
-        const target = snap.confidence >= 0.48 ? snap.predictedLane : currentLane;
-        this.lastDangerKey = String(target);
-        return { lanes: [target], predicted: snap, aiUsed: true };
+    // Làn "an toàn tạm" ở nhịp 1 — nếu đọc vị được thì chọn đúng làn người chơi
+    // sẽ chạy tới, khiến nhịp 2 trúng ngay nếu họ không phản ứng tiếp.
+    let safeLane: number;
+    if (canAdapt && snap.confidence >= 0.45) {
+      safeLane = snap.predictedLane;
+      if (safeLane === currentLane) {
+        // AI đoán người chơi đứng yên => để làn khác làm "cửa sống" cho công bằng.
+        const alt = [0, 1, 2].filter((l) => l !== currentLane);
+        safeLane = alt[Math.floor(Math.random() * alt.length)];
       }
-      const candidates = [0, 1, 2].filter((l) => String(l) !== this.lastDangerKey);
-      const pick = candidates[Math.floor(Math.random() * candidates.length)];
-      this.lastDangerKey = String(pick);
-      return { lanes: [pick], predicted: snap, aiUsed: false };
+    } else {
+      const options = [0, 1, 2].filter((l) => l !== currentLane);
+      safeLane = options[Math.floor(Math.random() * options.length)];
     }
 
-    if (canAdapt) {
-      const others = [0, 1, 2].filter((l) => l !== currentLane);
-      others.sort((a, b) => snap.probs[b] - snap.probs[a]);
-      const second = snap.predictedLane !== currentLane ? snap.predictedLane : others[0];
-      const lanes = [currentLane, second].sort((a, b) => a - b);
-      this.lastDangerKey = lanes.join(",");
-      return { lanes, predicted: snap, aiUsed: true };
-    }
+    const first = [0, 1, 2].filter((l) => l !== safeLane);
+    // Nhịp 2 đánh đúng làn an toàn vừa rồi + (từ đợt 9) thêm 1 làn kề để khó hơn.
+    const second = wave >= 8 && Math.random() < 0.45 ? [0, 2] : [safeLane];
 
-    const pairs = [
-      [0, 1],
-      [1, 2],
-      [0, 2],
-    ].filter((p) => p.join(",") !== this.lastDangerKey);
-    const chosen = pairs[Math.floor(Math.random() * pairs.length)];
-    this.lastDangerKey = chosen.join(",");
-    return { lanes: chosen, predicted: snap, aiUsed: false };
+    this.lastDangerKey = second.join(",");
+    this.patternHistory.push("DOUBLE");
+    if (this.patternHistory.length > 6) this.patternHistory.shift();
+    this.usedPatterns.add("DOUBLE");
+
+    return { first, second, predicted: snap, aiUsed: canAdapt };
   }
 
   pickBossSkill(lastKind: SkillKind | null, stage: 1 | 2 | 3): SkillKind {
