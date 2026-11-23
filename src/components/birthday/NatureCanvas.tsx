@@ -1,11 +1,19 @@
 import { useEffect, useRef } from "react";
+import { createFrameLoop, getMaxDpr, particleScale } from "../../utils/perf";
 
 type LayerMode = "back" | "front";
 
 /**
- * Hệ thống hiệu ứng thiên nhiên anime 4K chuyển động mượt 60fps:
+ * Hệ thống hiệu ứng thiên nhiên anime chuyển động mượt, tối ưu cho máy yếu:
  * - layer="back": Tia nắng hoàng hôn, sương nắng mặt hồ, sóng lấp lánh, chim bay xa, dây liễu rủ, đom đóm.
  * - layer="front": Cỏ & hoa dại mềm mại tiền cảnh uốn theo gió, cánh hoa anh đào & bokeh ánh nắng bay.
+ *
+ * Tối ưu:
+ * - Không còn `createLinearGradient` / `createRadialGradient` trong vòng lặp vẽ
+ *   (trước đây tạo hàng trăm gradient mỗi frame -> GC + tụt fps).
+ * - Các lớp tĩnh (tia nắng, sương) được "nướng" 1 lần ra offscreen canvas.
+ * - Hạt sáng dùng sprite nướng sẵn + drawImage.
+ * - Dùng chung 1 RAF loop, tự dừng khi tab ẩn, giới hạn DPR.
  */
 export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
@@ -13,16 +21,15 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
-    let raf = 0;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let dpr = getMaxDpr();
     let w = window.innerWidth;
     let h = window.innerHeight;
 
     const resizeCanvas = () => {
-      if (!canvas) return;
+      dpr = getMaxDpr();
       w = window.innerWidth;
       h = window.innerHeight;
       canvas.width = Math.floor(w * dpr);
@@ -63,8 +70,7 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       width: number;
       lean: number;
       phase: number;
-      color1: string;
-      color2: string;
+      color: string;
       flower?: "daisy" | "poppy" | null;
       alpha: number;
     }[] = [];
@@ -82,9 +88,93 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       alpha: number;
     }[] = [];
 
+    /** Hệ số mật độ hạt theo cấu hình máy */
+    const density = particleScale;
+
+    // ---------- Sprite nướng sẵn ----------
+    const makeDot = (rgb: string, softness = 0.35) => {
+      const S = 32;
+      const c = document.createElement("canvas");
+      c.width = c.height = S;
+      const g = c.getContext("2d")!;
+      const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+      grad.addColorStop(0, `rgba(${rgb},1)`);
+      grad.addColorStop(softness, `rgba(${rgb},0.45)`);
+      grad.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, S, S);
+      return c;
+    };
+    const dotWarm = makeDot("255,244,185", 0.45);
+    const dotDust = makeDot("255,242,200", 0.4);
+    const dotBokeh = makeDot("255,236,178", 0.5);
+
+    /** Sprite vệt sáng ngang (thay cho createLinearGradient mỗi khung hình) */
+    const makeGlintSprite = () => {
+      const W = 64;
+      const H = 8;
+      const c = document.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      const g = c.getContext("2d")!;
+      const grad = g.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, "rgba(255,232,160,0)");
+      grad.addColorStop(0.5, "rgba(255,245,205,1)");
+      grad.addColorStop(1, "rgba(255,232,160,0)");
+      g.fillStyle = grad;
+      g.fillRect(0, 0, W, H);
+      return c;
+    };
+    const glintSprite = makeGlintSprite();
+
+    /** Lớp tĩnh: tia nắng + sương nắng (vẽ 1 lần mỗi khi resize) */
+    let staticBack: HTMLCanvasElement | null = null;
+
+    const buildStaticBack = () => {
+      const sc = document.createElement("canvas");
+      sc.width = Math.max(1, Math.floor(w * dpr));
+      sc.height = Math.max(1, Math.floor(h * dpr));
+      const g = sc.getContext("2d")!;
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, w, h);
+
+      // 1. Tia nắng hoàng hôn
+      const sunX = w * 0.59;
+      const sunY = h * 0.37;
+      for (let i = 0; i < 4; i++) {
+        const angle = 2.42 + i * 0.17;
+        const len = Math.max(w, h) * 0.9;
+        const spread = 0.08 + (i % 2) * 0.03;
+        const pulse = 0.05;
+
+        const grad = g.createLinearGradient(sunX, sunY, sunX + Math.cos(angle) * len, sunY + Math.sin(angle) * len);
+        grad.addColorStop(0, `rgba(255, 234, 175, ${pulse * 1.5})`);
+        grad.addColorStop(0.5, `rgba(255, 212, 128, ${pulse * 0.65})`);
+        grad.addColorStop(1, "rgba(255, 200, 110, 0)");
+
+        g.fillStyle = grad;
+        g.beginPath();
+        g.moveTo(sunX, sunY);
+        g.lineTo(sunX + Math.cos(angle - spread) * len, sunY + Math.sin(angle - spread) * len);
+        g.lineTo(sunX + Math.cos(angle + spread) * len, sunY + Math.sin(angle + spread) * len);
+        g.closePath();
+        g.fill();
+      }
+
+      // 2. Sương nắng mỏng
+      const mistGrad = g.createLinearGradient(w * 0.35, h * 0.56, w * 0.95, h * 0.64);
+      mistGrad.addColorStop(0, "rgba(255, 228, 178, 0)");
+      mistGrad.addColorStop(0.5, "rgba(255, 232, 190, 0.09)");
+      mistGrad.addColorStop(1, "rgba(255, 228, 178, 0)");
+      g.fillStyle = mistGrad;
+      g.fillRect(0, h * 0.48, w, h * 0.22);
+
+      staticBack = sc;
+    };
+
     const rebuildScene = () => {
       if (layer === "back") {
-        fireflies = Array.from({ length: 28 }, () => ({
+        fireflies = Array.from({ length: Math.max(10, Math.round(28 * density)) }, () => ({
           x: Math.random() * w,
           y: h * (0.22 + Math.random() * 0.7),
           r: 1.4 + Math.random() * 2.4,
@@ -94,7 +184,7 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
           speed: 0.018 + Math.random() * 0.02,
         }));
 
-        sunDust = Array.from({ length: 42 }, () => ({
+        sunDust = Array.from({ length: Math.max(14, Math.round(42 * density)) }, () => ({
           x: w * (0.22 + Math.random() * 0.72),
           y: h * (0.08 + Math.random() * 0.78),
           r: 1 + Math.random() * 2.2,
@@ -115,8 +205,9 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
           };
         });
 
-        willowStrands = Array.from({ length: 24 }, (_, i) => {
-          const t = i / 23;
+        const strandCount = Math.max(10, Math.round(24 * density));
+        willowStrands = Array.from({ length: strandCount }, (_, i) => {
+          const t = i / Math.max(1, strandCount - 1);
           return {
             xRatio: 0.02 + t * 0.48 + (Math.random() - 0.5) * 0.02,
             yRatio: 0.0 + (t > 0.62 ? (t - 0.62) * 0.24 : Math.random() * 0.06),
@@ -140,8 +231,14 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
           wingPh: Math.random() * Math.PI * 2,
           scale: 0.65 + Math.random() * 0.45,
         }));
+
+        buildStaticBack();
       } else {
-        const count = w < 640 ? 90 : 175;
+        const count = Math.round((w < 640 ? 90 : 175) * (density < 1 ? 0.72 : 1));
+        const darkColors = ["#182c14", "#1f3719", "#25401d"];
+        const midColors = ["#335420", "#456826", "#5a7c2d"];
+        const sunColors = ["#7c9838", "#96aa45", "#b2ba56"];
+
         blades = Array.from({ length: count }, (_, i) => {
           const xRatio = (i + Math.random() * 0.85) / count;
           const depth = Math.random();
@@ -154,9 +251,8 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
           if (r < 0.05 && (xRatio < 0.22 || xRatio > 0.78)) flower = "daisy";
           else if (r < 0.085 && (xRatio < 0.18 || xRatio > 0.82)) flower = "poppy";
 
-          const darkColors = ["#182c14", "#1f3719", "#25401d"];
-          const midColors = ["#335420", "#456826", "#5a7c2d"];
-          const sunColors = ["#7c9838", "#96aa45", "#b2ba56"];
+          // Trước đây mỗi lá tạo 1 LinearGradient/khung hình. Nay trộn sẵn 1 màu
+          // (chênh lệch thị giác gần như không thấy vì alpha thấp + chuyển động gió).
           const c1 = depth < 0.4 ? darkColors[i % 3] : midColors[i % 3];
           const c2 = depth < 0.4 ? midColors[i % 3] : sunColors[i % 3];
 
@@ -166,14 +262,13 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
             width: 1.8 + depth * 2.1,
             lean: (Math.random() - 0.35) * 11,
             phase: Math.random() * Math.PI * 2,
-            color1: c1,
-            color2: c2,
+            color: mixHex(c1, c2, 0.5),
             flower,
             alpha: 0.72 + depth * 0.25,
           };
         });
 
-        petals = Array.from({ length: w < 640 ? 18 : 30 }, (_, i) => ({
+        petals = Array.from({ length: Math.round((w < 640 ? 18 : 30) * Math.max(0.4, density)) }, (_, i) => ({
           x: Math.random() * w,
           y: Math.random() * h,
           size: i % 6 === 0 ? 10 + Math.random() * 14 : 4 + Math.random() * 4.2,
@@ -190,65 +285,43 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
 
     rebuildScene();
 
+    let resizeRaf = 0;
     const onResize = () => {
-      resizeCanvas();
-      rebuildScene();
+      cancelAnimationFrame(resizeRaf);
+      resizeRaf = requestAnimationFrame(() => {
+        resizeCanvas();
+        rebuildScene();
+      });
     };
     window.addEventListener("resize", onResize);
 
     const startTime = performance.now();
 
     const drawBack = (t: number) => {
-      // 1. Tia nắng hoàng hôn mềm mại
-      const sunX = w * 0.59;
-      const sunY = h * 0.37;
-      for (let i = 0; i < 4; i++) {
-        const angle = 2.42 + i * 0.17 + Math.sin(t * 0.22 + i) * 0.03;
-        const len = Math.max(w, h) * 0.9;
-        const spread = 0.08 + (i % 2) * 0.03;
-        const pulse = 0.04 + 0.022 * Math.sin(t * 0.45 + i * 1.3);
-
-        const grad = ctx.createLinearGradient(sunX, sunY, sunX + Math.cos(angle) * len, sunY + Math.sin(angle) * len);
-        grad.addColorStop(0, `rgba(255, 234, 175, ${pulse * 1.5})`);
-        grad.addColorStop(0.5, `rgba(255, 212, 128, ${pulse * 0.65})`);
-        grad.addColorStop(1, "rgba(255, 200, 110, 0)");
-
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(sunX, sunY);
-        ctx.lineTo(sunX + Math.cos(angle - spread) * len, sunY + Math.sin(angle - spread) * len);
-        ctx.lineTo(sunX + Math.cos(angle + spread) * len, sunY + Math.sin(angle + spread) * len);
-        ctx.closePath();
-        ctx.fill();
+      // 1. Tia nắng (lớp nướng sẵn) — nhấp nháy rất nhẹ bằng globalAlpha
+      if (staticBack) {
+        ctx.globalAlpha = 0.82 + 0.18 * Math.sin(t * 0.45);
+        ctx.drawImage(staticBack, 0, 0, w, h);
+        ctx.globalAlpha = 1;
       }
 
-      // 2. Sương nắng mỏng nhẹ trôi ngang mặt hồ
-      const mistShift = Math.sin(t * 0.25) * 40;
-      const mistGrad = ctx.createLinearGradient(w * 0.35 + mistShift, h * 0.56, w * 0.95 + mistShift, h * 0.64);
-      mistGrad.addColorStop(0, "rgba(255, 228, 178, 0)");
-      mistGrad.addColorStop(0.5, "rgba(255, 232, 190, 0.09)");
-      mistGrad.addColorStop(1, "rgba(255, 228, 178, 0)");
-      ctx.fillStyle = mistGrad;
-      ctx.fillRect(0, h * 0.48, w, h * 0.22);
-
-      // 3. Mặt hồ gợn sóng & ánh kim cương lấp lánh (Shinkai water glints)
+      // 2. Mặt hồ gợn sóng & ánh kim cương lấp lánh (sprite thay vì gradient)
+      ctx.globalCompositeOperation = "lighter";
       for (const g of sunGlints) {
         const wave = Math.sin(t * g.sp + g.ph);
         if (wave < -0.15) continue;
         const gx = g.xRatio * w + Math.sin(t * 0.9 + g.ph) * 6;
         const gy = g.yRatio * h;
-        const a = (wave + 0.15) * 0.22;
-        const rg = ctx.createLinearGradient(gx - g.w / 2, gy, gx + g.w / 2, gy);
-        rg.addColorStop(0, "rgba(255, 232, 160, 0)");
-        rg.addColorStop(0.5, `rgba(255, 245, 205, ${a})`);
-        rg.addColorStop(1, "rgba(255, 232, 160, 0)");
-        ctx.fillStyle = rg;
-        ctx.fillRect(gx - g.w / 2, gy, g.w, 1.6);
+        ctx.globalAlpha = (wave + 0.15) * 0.22;
+        ctx.drawImage(glintSprite, gx - g.w / 2, gy, g.w, 2.2);
       }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
 
-      // 4. Đàn chim bay chầm chậm phía chân trời hoàng hôn
+      // 3. Đàn chim bay chầm chậm phía chân trời
       ctx.strokeStyle = "rgba(85, 62, 58, 0.45)";
       ctx.lineWidth = 1.4;
+      ctx.beginPath();
       for (const b of birds) {
         b.x += b.speed;
         b.wingPh += 0.085;
@@ -257,14 +330,13 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
         const flap = Math.sin(b.wingPh) * 4.5 * b.scale;
         const span = 7 * b.scale;
 
-        ctx.beginPath();
         ctx.moveTo(b.x - span, by + flap);
         ctx.quadraticCurveTo(b.x - span * 0.45, by - 3 * b.scale, b.x, by);
         ctx.quadraticCurveTo(b.x + span * 0.45, by - 3 * b.scale, b.x + span, by + flap);
-        ctx.stroke();
       }
+      ctx.stroke();
 
-      // 5. Cành liễu rủ tự nhiên uốn lượn theo gió
+      // 4. Cành liễu rủ uốn lượn theo gió (không dùng save/restore cho từng lá)
       for (const s of willowStrands) {
         const sx = s.xRatio * w;
         const sy = s.yRatio * h;
@@ -283,36 +355,34 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
         ctx.stroke();
 
         ctx.fillStyle = s.hue;
+        const leafAngle = wind * 0.015;
+        ctx.beginPath();
         for (let k = 1; k <= s.leaves; k++) {
           const lt = k / s.leaves;
           const omt = 1 - lt;
           const lx = omt * omt * sx + 2 * omt * lt * cx + lt * lt * ex;
           const ly = omt * omt * sy + 2 * omt * lt * cy + lt * lt * ey;
           const side = k % 2 === 0 ? 1 : -1;
-          ctx.save();
-          ctx.translate(lx, ly);
-          ctx.rotate(side * 0.52 + wind * 0.015);
-          ctx.beginPath();
-          ctx.ellipse(side * 2.4, 0, 4.4, 1.4, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
+          // ellipse(x, y, rx, ry, rotation, start, end) => gộp nhiều lá vào 1 path
+          ctx.ellipse(lx + side * 2.4, ly, 4.4, 1.4, side * 0.52 + leafAngle, 0, Math.PI * 2);
         }
+        ctx.fill();
       }
 
-      // 6. Bụi nắng hoàng hôn
+      // 5. Bụi nắng hoàng hôn (sprite)
+      ctx.globalCompositeOperation = "lighter";
       for (const d of sunDust) {
         d.ph += 0.015;
         d.x += d.vx;
         d.y += d.vy + Math.sin(d.ph) * 0.1;
         if (d.x > w + 10) d.x = -10;
         const alpha = d.a * (0.5 + 0.5 * Math.sin(d.ph));
-        ctx.fillStyle = `rgba(255, 242, 200, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-        ctx.fill();
+        const size = d.r * 4;
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(dotDust, d.x - size / 2, d.y - size / 2, size, size);
       }
 
-      // 7. Đom đóm ấm áp
+      // 6. Đom đóm ấm áp (sprite)
       for (const f of fireflies) {
         f.phase += f.speed;
         f.x += f.vx + Math.sin(f.phase * 0.7) * 0.2;
@@ -323,38 +393,32 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
         if (f.x > w + 20) f.x = -20;
 
         const alpha = 0.25 + 0.65 * (0.5 + 0.5 * Math.sin(f.phase));
-        const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r * 5);
-        g.addColorStop(0, `rgba(255, 244, 185, ${alpha})`);
-        g.addColorStop(0.45, `rgba(255, 204, 100, ${alpha * 0.42})`);
-        g.addColorStop(1, "rgba(255, 190, 80, 0)");
-
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(f.x, f.y, f.r * 5, 0, Math.PI * 2);
-        ctx.fill();
+        const size = f.r * 10;
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(dotWarm, f.x - size / 2, f.y - size / 2, size, size);
       }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
     };
 
     const drawFront = (t: number) => {
-      // 1. Thảm cỏ mềm mại tinh tế ở rìa đáy (không che chân bàn/đầu gối)
+      // 1. Thảm cỏ mềm mại ở rìa đáy
       const baseY = h + 4;
+      const gustSpeed = t * 1.45;
+
+      // Hai nhóm màu để giảm số lần đổi fillStyle (giữ cảm giác nhiều tông).
       for (const b of blades) {
         const bx = b.xRatio * w;
         const gust =
-          Math.sin(t * 1.45 - b.xRatio * 6 + b.phase * 0.3) * (8 + b.height * 0.14) +
+          Math.sin(gustSpeed - b.xRatio * 6 + b.phase * 0.3) * (8 + b.height * 0.14) +
           Math.sin(t * 2.5 - b.xRatio * 11) * 2.8;
         const tipX = bx + b.lean + gust;
         const tipY = baseY - b.height;
         const ctrlX = bx + (b.lean + gust) * 0.34;
         const ctrlY = baseY - b.height * 0.55;
 
-        const grad = ctx.createLinearGradient(bx, baseY, tipX, tipY);
-        grad.addColorStop(0, b.color1);
-        grad.addColorStop(1, b.color2);
-
-        ctx.save();
         ctx.globalAlpha = b.alpha;
-        ctx.fillStyle = grad;
+        ctx.fillStyle = b.color;
         ctx.beginPath();
         ctx.moveTo(bx - b.width, baseY);
         ctx.quadraticCurveTo(ctrlX - b.width * 0.35, ctrlY, tipX, tipY);
@@ -363,31 +427,32 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
         ctx.fill();
 
         if (b.flower === "daisy") {
-          ctx.translate(tipX, tipY);
+          ctx.globalAlpha = 1;
           ctx.fillStyle = "rgba(255, 252, 242, 0.92)";
+          ctx.beginPath();
+          const rot = gust * 0.015;
           for (let p = 0; p < 5; p++) {
-            const a = (p / 5) * Math.PI * 2 + gust * 0.015;
-            ctx.beginPath();
-            ctx.ellipse(Math.cos(a) * 3.8, Math.sin(a) * 3.8, 3.1, 1.5, a, 0, Math.PI * 2);
-            ctx.fill();
+            const a = (p / 5) * Math.PI * 2 + rot;
+            ctx.ellipse(tipX + Math.cos(a) * 3.8, tipY + Math.sin(a) * 3.8, 3.1, 1.5, a, 0, Math.PI * 2);
           }
+          ctx.fill();
           ctx.fillStyle = "#facc15";
           ctx.beginPath();
-          ctx.arc(0, 0, 2.2, 0, Math.PI * 2);
+          ctx.arc(tipX, tipY, 2.2, 0, Math.PI * 2);
           ctx.fill();
         } else if (b.flower === "poppy") {
-          ctx.translate(tipX, tipY);
+          ctx.globalAlpha = 1;
           ctx.fillStyle = "rgba(249, 115, 56, 0.92)";
           ctx.beginPath();
-          ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+          ctx.arc(tipX, tipY, 4.5, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = "#fef08a";
           ctx.beginPath();
-          ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
+          ctx.arc(tipX, tipY, 1.8, 0, Math.PI * 2);
           ctx.fill();
         }
-        ctx.restore();
       }
+      ctx.globalAlpha = 1;
 
       // 2. Cánh hoa anh đào, lá liễu & bokeh ánh nắng bay qua tiền cảnh
       for (const p of petals) {
@@ -405,38 +470,43 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
         }
 
         if (p.kind === "bokeh") {
-          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
-          g.addColorStop(0, `rgba(255, 236, 178, ${p.alpha})`);
-          g.addColorStop(1, "rgba(255, 224, 140, 0)");
-          ctx.fillStyle = g;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = p.alpha * 2.2;
+          const size = p.size * 2;
+          ctx.drawImage(dotBokeh, p.x - size / 2, p.y - size / 2, size, size);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
         } else {
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate(p.rot);
-          ctx.fillStyle =
-            p.kind === "sakura" ? "rgba(255, 204, 224, 0.78)" : "rgba(154, 208, 92, 0.7)";
+          ctx.fillStyle = p.kind === "sakura" ? "rgba(255, 204, 224, 0.78)" : "rgba(154, 208, 92, 0.7)";
           ctx.beginPath();
-          ctx.ellipse(0, 0, p.size, p.kind === "sakura" ? p.size * 0.56 : p.size * 0.35, 0, 0, Math.PI * 2);
+          ctx.ellipse(p.x, p.y, p.size, p.kind === "sakura" ? p.size * 0.56 : p.size * 0.35, p.rot, 0, Math.PI * 2);
           ctx.fill();
-          ctx.restore();
         }
       }
     };
 
-    const draw = (now: number) => {
+    // Lớp nền chạy 45fps (đủ mượt cho hiệu ứng nền, tiết kiệm ~25% GPU),
+    // lớp tiền cảnh chạy 60fps.
+    const interval = layer === "back" ? 1 / 45 : 0;
+    let acc = 0;
+
+    const draw = (now: number, dt: number) => {
+      if (interval > 0) {
+        acc += dt;
+        if (acc < interval) return;
+        acc = 0;
+      }
       const t = (now - startTime) * 0.001;
       ctx.clearRect(0, 0, w, h);
       if (layer === "back") drawBack(t);
       else drawFront(t);
-      raf = requestAnimationFrame(draw);
     };
 
-    raf = requestAnimationFrame(draw);
+    const stop = createFrameLoop(draw);
+
     return () => {
-      cancelAnimationFrame(raf);
+      stop();
+      cancelAnimationFrame(resizeRaf);
       window.removeEventListener("resize", onResize);
     };
   }, [layer]);
@@ -447,4 +517,20 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       className={`pointer-events-none absolute inset-0 h-full w-full ${layer === "back" ? "z-10" : "z-30"}`}
     />
   );
+}
+
+/** Trộn 2 màu hex -> chuỗi rgb (dùng 1 lần lúc dựng scene) */
+function mixHex(a: string, b: string, t: number): string {
+  const pa = hexToRgb(a);
+  const pb = hexToRgb(b);
+  const r = Math.round(pa[0] + (pb[0] - pa[0]) * t);
+  const g = Math.round(pa[1] + (pb[1] - pa[1]) * t);
+  const bl = Math.round(pa[2] + (pb[2] - pa[2]) * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const v = hex.replace("#", "");
+  const n = parseInt(v.length === 3 ? v.replace(/(.)/g, "$1$1") : v, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }

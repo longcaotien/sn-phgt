@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createFrameLoop, getMaxDpr, lowEnd, particleScale } from "../../utils/perf";
 import type { SkillKind } from "./bossAI";
 
 export type VfxBurst = {
@@ -117,7 +118,7 @@ export default function BossVfxCanvas({
       const isCrit = burst.type === "crit";
       const cx = pts.chest.x;
       const cy = pts.chest.y;
-      const count = isCrit ? 52 : 34;
+      const count = Math.round((isCrit ? 52 : 34) * particleScale);
       for (let i = 0; i < count; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = (isCrit ? 280 : 200) + Math.random() * 620;
@@ -170,7 +171,7 @@ export default function BossVfxCanvas({
     } else if (burst.type === "playerHit") {
       const lx = w * LANE_X[burst.lane ?? stateRef.current.lane];
       const ly = h * 0.84;
-      for (let i = 0; i < 32; i++) {
+      for (let i = 0; i < Math.round(32 * particleScale); i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 140 + Math.random() * 380;
         particlesRef.current.push({
@@ -214,7 +215,7 @@ export default function BossVfxCanvas({
           lineWidth: 4,
           squashY: 0.32,
         });
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < Math.round(20 * particleScale); i++) {
           const ang = -Math.PI + Math.random() * Math.PI;
           const spd = 120 + Math.random() * 340;
           particlesRef.current.push({
@@ -234,7 +235,7 @@ export default function BossVfxCanvas({
         }
       }
     } else if (burst.type === "phase") {
-      for (let i = 0; i < 65; i++) {
+      for (let i = 0; i < Math.round(65 * particleScale); i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 160 + Math.random() * 580;
         particlesRef.current.push({
@@ -270,17 +271,23 @@ export default function BossVfxCanvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let dpr = Math.min(2, window.devicePixelRatio || 1);
+    let dpr = getMaxDpr();
     const resize = () => {
-      dpr = Math.min(2, window.devicePixelRatio || 1);
+      dpr = getMaxDpr();
       canvas.width = Math.floor(canvas.clientWidth * dpr);
       canvas.height = Math.floor(canvas.clientHeight * dpr);
     };
     resize();
-    window.addEventListener("resize", resize);
+    // shadowBlur trên canvas là "blur mềm" chạy trên CPU/GPU mỗi frame và rất đắt.
+    // Trên máy yếu ta tắt hẳn glow, bù lại bằng alpha cao hơn.
+    const GLOW = lowEnd ? 0 : 1;
+    let resizeRaf = 0;
+    const onResize = () => {
+      cancelAnimationFrame(resizeRaf);
+      resizeRaf = requestAnimationFrame(resize);
+    };
+    window.addEventListener("resize", onResize);
 
-    let raf = 0;
-    let last = performance.now();
     let ambientTimer = 0;
 
     const drawLightning = (x1: number, y1: number, x2: number, y2: number, jitter: number, color: string, width: number) => {
@@ -298,19 +305,25 @@ export default function BossVfxCanvas({
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 14;
+      ctx.shadowBlur = 14 * GLOW;
       ctx.stroke();
       ctx.restore();
     };
 
-    const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
+    // Máy yếu: vẽ 30fps (mắt gần như không phân biệt được với hiệu ứng hạt,
+    // nhưng CPU/GPU giảm ~50%). Giữ dt thật để chuyển động không bị chậm.
+    const minFrameMs = lowEnd ? 32 : 0;
+    let accDt = 0;
+
+    const loop = (now: number, dt: number) => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      if (w === 0 || h === 0) {
-        raf = requestAnimationFrame(loop);
-        return;
+      if (w === 0 || h === 0) return;
+      if (minFrameMs) {
+        accDt += dt * 1000;
+        if (accDt < minFrameMs) return;
+        dt = accDt / 1000;
+        accDt = 0;
       }
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -323,7 +336,7 @@ export default function BossVfxCanvas({
 
       // Hạt nền bóng tối + tàn lửa
       ambientTimer += dt;
-      if (ambientTimer > 0.065 && particlesRef.current.length < 130) {
+      if (ambientTimer > 0.065 && particlesRef.current.length < Math.round(130 * particleScale)) {
         ambientTimer = 0;
         const isShadow = Math.random() < 0.38;
         particlesRef.current.push({
@@ -393,7 +406,7 @@ export default function BossVfxCanvas({
               ctx.lineWidth = 2 + pulse * 2;
               ctx.setLineDash([10, 8]);
               ctx.shadowColor = isJudgment ? "#c026d3" : "#ff2a10";
-              ctx.shadowBlur = 16;
+              ctx.shadowBlur = 16 * GLOW;
               ctx.stroke();
               ctx.restore();
             } else if (isActive) {
@@ -436,7 +449,7 @@ export default function BossVfxCanvas({
               ctx.strokeStyle = "#ffffff";
               ctx.lineWidth = 5 + pulse * 3;
               ctx.shadowColor = isJudgment ? "#e879f9" : "#ff6b3d";
-              ctx.shadowBlur = 24;
+              ctx.shadowBlur = 24 * GLOW;
               ctx.stroke();
               ctx.restore();
 
@@ -492,7 +505,7 @@ export default function BossVfxCanvas({
             ctx.strokeStyle = "rgba(180, 230, 255, 0.9)";
             ctx.lineWidth = 3;
             ctx.shadowColor = "#4fa8ff";
-            ctx.shadowBlur = 18;
+            ctx.shadowBlur = 18 * GLOW;
             ctx.stroke();
             ctx.restore();
           }
@@ -526,7 +539,7 @@ export default function BossVfxCanvas({
             ctx.strokeStyle = beamGrad;
             ctx.lineWidth = 4 + pulse * 4;
             ctx.shadowColor = isCounter ? "#c084fc" : "#ff2d6b";
-            ctx.shadowBlur = 22;
+            ctx.shadowBlur = 22 * GLOW;
             ctx.stroke();
             ctx.restore();
 
@@ -577,7 +590,7 @@ export default function BossVfxCanvas({
         ctx.strokeStyle = rg.color;
         ctx.lineWidth = rg.lineWidth * (1 - p * 0.6);
         ctx.shadowColor = rg.color;
-        ctx.shadowBlur = 16;
+        ctx.shadowBlur = 16 * GLOW;
         ctx.stroke();
         ctx.restore();
       }
@@ -603,7 +616,7 @@ export default function BossVfxCanvas({
         ctx.quadraticCurveTo(0, thick * 0.5, -len, 0);
         ctx.fillStyle = "#ffffff";
         ctx.shadowColor = sl.color;
-        ctx.shadowBlur = 24;
+        ctx.shadowBlur = 24 * GLOW;
         ctx.fill();
         ctx.restore();
       }
@@ -630,7 +643,7 @@ export default function BossVfxCanvas({
         ctx.save();
         ctx.globalAlpha = p < 0.15 ? p / 0.15 : 1 - p;
         ctx.shadowColor = pt.glow;
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 10 * GLOW;
         if (pt.line) {
           ctx.beginPath();
           ctx.moveTo(prevX - pt.vx * 0.018, prevY - pt.vy * 0.018);
@@ -649,13 +662,13 @@ export default function BossVfxCanvas({
       }
 
       ctx.restore();
-      raf = requestAnimationFrame(loop);
     };
 
-    raf = requestAnimationFrame(loop);
+    const stop = createFrameLoop(loop);
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
+      stop();
+      cancelAnimationFrame(resizeRaf);
+      window.removeEventListener("resize", onResize);
     };
   }, []);
 

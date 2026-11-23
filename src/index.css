@@ -363,3 +363,50 @@ body,
   18% { opacity: 0.9; }
   100% { transform: translateY(-72vh) scale(1.15); opacity: 0; }
 }
+
+/* =========================================================
+   CHẾ ĐỘ HIỆU NĂNG THẤP (máy yếu / điện thoại tầm trung)
+   Gắn class `perf-lite` lên <html> từ main.tsx.
+   `backdrop-filter` phủ trên các canvas đang chạy 60fps là thứ đắt nhất
+   trên GPU tích hợp, nên được thay bằng nền mờ đục tĩnh.
+   ========================================================= */
+.perf-lite .sys-panel,
+.perf-lite .sys-panel-danger {
+  backdrop-filter: none;
+  background: linear-gradient(180deg, rgba(10, 24, 52, 0.94), rgba(4, 10, 26, 0.96));
+}
+.perf-lite .sys-panel-danger {
+  background: linear-gradient(180deg, rgba(48, 6, 10, 0.95), rgba(10, 2, 6, 0.97));
+}
+.perf-lite .backdrop-blur-md,
+.perf-lite .backdrop-blur-sm,
+.perf-lite .backdrop-blur-xl,
+.perf-lite .backdrop-blur-\[3px\] {
+  backdrop-filter: none !important;
+}
+/* Bỏ các lớp blur trang trí rất lớn (blur-3xl, blur-2xl) — tốn fill-rate khủng. */
+.perf-lite .blur-3xl,
+.perf-lite .blur-2xl {
+  filter: none;
+}
+/* Giảm bớt hoạ tiết quét/nhiễu lặp lại */
+.perf-lite .grain,
+.perf-lite .sweep-down {
+  display: none;
+}
+
+/* Tôn trọng lựa chọn "giảm chuyển động" của hệ điều hành */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .backdrop-blur-md,
+  .backdrop-blur-sm,
+  .backdrop-blur-xl {
+    backdrop-filter: none !important;
+  }
+}

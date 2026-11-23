@@ -1,10 +1,15 @@
-import { useCallback, useState } from "react";
-import { AnimatePresence } from "framer-motion";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import BootSequence from "./components/BootSequence";
 import Hero from "./components/Hero";
-import Chapter2 from "./components/chapter2/Chapter2";
-import BirthdayWorld from "./components/birthday/BirthdayWorld";
-import DevJump, { type DevTarget } from "./components/DevJump";
+import type { DevTarget } from "./components/DevJump";
+
+// Chương II & Thế giới sinh nhật nặng (nhiều canvas/ảnh) => tách chunk riêng,
+// chỉ tải khi người chơi thực sự bước vào. Lần đầu mở trang nhanh hơn rất nhiều.
+const Chapter2 = lazy(() => import("./components/chapter2/Chapter2"));
+const BirthdayWorld = lazy(() => import("./components/birthday/BirthdayWorld"));
+// Bảng dev/Gemini chỉ là công cụ: nạp sau khi trang đã rảnh (không chặn first paint).
+const DevJump = lazy(() => import("./components/DevJump"));
 
 const KEY_FLAG = "sl_birthday_key";
 
@@ -48,6 +53,23 @@ function getInitialFromUrl(): {
   return { booted: false, chapter: 1, hasKey: savedKey };
 }
 
+/** Màn hình chờ nhẹ khi đang tải chunk (thường chỉ vài trăm ms). */
+function LoadingVeil() {
+  return (
+    <motion.div
+      className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-[#02030a]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div className="font-sys text-[10px] tracking-[0.4em] text-sky-300/80">ĐANG MỞ CỔNG…</div>
+      <div className="h-1 w-40 overflow-hidden rounded-full bg-sky-950">
+        <div className="frame-sweep h-full w-full" />
+      </div>
+    </motion.div>
+  );
+}
+
 export default function App() {
   const [init] = useState(getInitialFromUrl);
   const [booted, setBooted] = useState(init.booted);
@@ -57,6 +79,27 @@ export default function App() {
   const [bdKey, setBdKey] = useState(0);
   const [birthdayStage, setBirthdayStage] = useState<"celebrate" | "ending">(init.birthdayStage ?? "celebrate");
   const [c2Config, setC2Config] = useState<Extract<DevTarget, { chapter: 2 }> | undefined>(init.c2Init);
+  const [showDev, setShowDev] = useState(false);
+
+  // Chỉ gắn bảng dev sau khi trang đã vẽ xong (tránh tranh CPU lúc khởi động).
+  useEffect(() => {
+    const t = window.setTimeout(() => setShowDev(true), 1800);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // Nạp trước chunk chương II khi trình duyệt rảnh => chuyển cảnh không bị khựng.
+  useEffect(() => {
+    if (chapter === 1) {
+      const idle = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
+        .requestIdleCallback;
+      const t = idle
+        ? idle(() => void import("./components/chapter2/Chapter2"), { timeout: 4000 })
+        : window.setTimeout(() => void import("./components/chapter2/Chapter2"), 2500);
+      return () => {
+        if (typeof t === "number") window.clearTimeout(t);
+      };
+    }
+  }, [chapter]);
 
   const finish = useCallback(() => setBooted(true), []);
 
@@ -108,25 +151,27 @@ export default function App() {
           }}
         />
       )}
-      {booted && chapter === 2 && (
-        <Chapter2
-          key={`c2-${c2Key}`}
-          initialPhase={c2Config?.phase}
-          initialWave={c2Config?.wave}
-          initialBossHp={c2Config?.bossHp}
-          onCollectKey={handleCollectKey}
-          onExit={() => setChapter(1)}
-        />
-      )}
-      {booted && chapter === "birthday" && (
-        <BirthdayWorld
-          key={`bd-${bdKey}`}
-          initialStage={birthdayStage}
-          onBackLobby={() => setChapter(1)}
-        />
-      )}
+      <Suspense fallback={<LoadingVeil />}>
+        {booted && chapter === 2 && (
+          <Chapter2
+            key={`c2-${c2Key}`}
+            initialPhase={c2Config?.phase}
+            initialWave={c2Config?.wave}
+            initialBossHp={c2Config?.bossHp}
+            onCollectKey={handleCollectKey}
+            onExit={() => setChapter(1)}
+          />
+        )}
+        {booted && chapter === "birthday" && (
+          <BirthdayWorld key={`bd-${bdKey}`} initialStage={birthdayStage} onBackLobby={() => setChapter(1)} />
+        )}
+      </Suspense>
       <AnimatePresence>{!booted && <BootSequence key="boot" onFinish={finish} />}</AnimatePresence>
-      <DevJump onJump={handleDevJump} />
+      {showDev && (
+        <Suspense fallback={null}>
+          <DevJump onJump={handleDevJump} />
+        </Suspense>
+      )}
     </div>
   );
 }

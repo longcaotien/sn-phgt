@@ -3,8 +3,8 @@ import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from
 import RainCanvas from "./RainCanvas";
 import Countdown from "./Countdown";
 import PortalGateCard, { GoldenKeyIcon } from "./PortalGate";
-import jinwoo from "../assets/jinwoo.jpg";
-import bg from "../assets/bg.jpg";
+import jinwoo from "../assets/jinwoo.webp";
+import bg from "../assets/bg.webp";
 import natureBg from "../assets/birthday-scene-bg.webp";
 import { bossIdle } from "./chapter2/assets";
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
-import RainCanvas from "../RainCanvas";
+import { createFrameLoop } from "../../utils/perf";
 import { avatar, bossArena, bossEnrage, bossIdle, heroKneel, heroStand } from "./assets";
 import { PlayerBehaviorTracker, type PredictionSnapshot, type SkillKind } from "./bossAI";
 import BossVfxCanvas, { type VfxBurst } from "./BossVfxCanvas";
@@ -106,6 +106,7 @@ function SkillGlyph({ kind, color }: { kind: SkillKind; color: string }) {
 
 export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, onHeal, onVictory }: Props) {
   const [bossHp, setBossHp] = useState(startHp);
+  const bossHpRef = useRef(startHp);
   const [skill, setSkill] = useState<Skill | null>(null);
   const [danger, setDanger] = useState<number[]>([]);
   const [lane, setLane] = useState(1);
@@ -228,25 +229,22 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
 
   // ---------- đồng hồ nội lực khi chịu đòn ----------
   useEffect(() => {
-    let raf = 0;
-    let last = performance.now();
     let painted = 0;
-    const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
+    let lastPaint = 0;
+    const loop = (now: number, dt: number) => {
       const bracing = holdRef.current && skillRef.current?.kind === "laugh" && skillRef.current.mode === "active";
-      const drainRate = bossHp <= 240 ? -92 : -72;
+      const drainRate = bossHpRef.current <= 240 ? -92 : -72;
       const g = Math.max(0, Math.min(100, gaugeRef.current + (bracing ? 96 : drainRate) * dt));
       gaugeRef.current = g;
-      if (Math.abs(g - painted) >= 1 || (g === 0 && painted !== 0) || (g === 100 && painted !== 100)) {
-        painted = g;
-        setGauge(g);
+      const rounded = Math.round(g);
+      if (rounded !== painted && now - lastPaint >= 66) {
+        painted = rounded;
+        lastPaint = now;
+        setGauge(rounded);
       }
-      raf = requestAnimationFrame(loop);
     };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [bossHp]);
+    return createFrameLoop(loop);
+  }, []);
 
   // ---------- bàn phím ----------
   useEffect(() => {
@@ -492,6 +490,7 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           if (hitOutcome === "crit") crits += 1;
           comboTrack += 1;
           bestCombo = Math.max(bestCombo, comboTrack);
+          bossHpRef.current = seqHp;
           setBossHp(seqHp);
           onProgress(seqHp);
           setCombo(comboTrack);
@@ -647,10 +646,8 @@ export default function BossFight({ hp, maxHp, startHp, onProgress, onDamage, on
           />
         </div>
 
-        {/* tàn lửa nhẹ */}
-        <div className="pointer-events-none absolute inset-0 z-[4] opacity-75">
-          <RainCanvas rain={false} intensity={1.2} />
-        </div>
+        {/* tàn lửa: BossVfxCanvas bên dưới đã tự vẽ hạt nền + tàn lửa,
+            nên bỏ lớp RainCanvas trùng lặp (tiết kiệm 1 canvas full-screen/khung hình). */}
 
         {/* ====== Boss ====== */}
         <motion.div
