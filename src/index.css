@@ -363,3 +363,136 @@ body,
   18% { opacity: 0.9; }
   100% { transform: translateY(-72vh) scale(1.15); opacity: 0; }
 }
+
+/* =========================================================
+   CHẾ ĐỘ HIỆU NĂNG THẤP (máy yếu / điện thoại tầm trung)
+   Gắn class `perf-lite` lên <html> từ main.tsx.
+   `backdrop-filter` phủ trên các canvas đang chạy 60fps là thứ đắt nhất
+   trên GPU tích hợp, nên được thay bằng nền mờ đục tĩnh.
+   ========================================================= */
+.perf-lite .sys-panel,
+.perf-lite .sys-panel-danger {
+  backdrop-filter: none;
+  background: linear-gradient(180deg, rgba(10, 24, 52, 0.94), rgba(4, 10, 26, 0.96));
+}
+.perf-lite .sys-panel-danger {
+  background: linear-gradient(180deg, rgba(48, 6, 10, 0.95), rgba(10, 2, 6, 0.97));
+}
+.perf-lite .backdrop-blur-md,
+.perf-lite .backdrop-blur-sm,
+.perf-lite .backdrop-blur-xl,
+.perf-lite .backdrop-blur-\[3px\] {
+  backdrop-filter: none !important;
+}
+/* Bỏ các lớp blur trang trí rất lớn (blur-3xl, blur-2xl) — tốn fill-rate khủng. */
+.perf-lite .blur-3xl,
+.perf-lite .blur-2xl {
+  filter: none;
+}
+/* Giảm bớt hoạ tiết quét/nhiễu lặp lại */
+.perf-lite .grain,
+.perf-lite .sweep-down {
+  display: none;
+}
+
+/* Tôn trọng lựa chọn "giảm chuyển động" của hệ điều hành */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .backdrop-blur-md,
+  .backdrop-blur-sm,
+  .backdrop-blur-xl {
+    backdrop-filter: none !important;
+  }
+}
+
+/* =========================================================
+   THẾ GIỚI SINH NHẬT — TYPOGRAPHY & TRANG TRÍ
+   ========================================================= */
+
+/* Tiêu đề chữ gradient vàng → hồng ngọc, có viền sáng mảnh */
+.title-grad-warm {
+  background: linear-gradient(
+    180deg,
+    #fffdf5 0%,
+    #ffe9b8 26%,
+    #ffcf87 52%,
+    #ff9fbe 78%,
+    #ec7fa9 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.5px rgba(255, 246, 225, 0.35);
+  filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 22px rgba(255, 214, 140, 0.45));
+}
+
+/* Nút hành động chính: ánh kim loang chậm */
+.btn-gold-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-gold-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.55) 46%,
+    rgba(255, 255, 255, 0.15) 54%,
+    transparent 72%
+  );
+  transform: translateX(-120%);
+  animation: btnSheen 4.6s ease-in-out infinite;
+}
+@keyframes btnSheen {
+  0%, 55% { transform: translateX(-120%); }
+  85%, 100% { transform: translateX(120%); }
+}
+
+/* Thẻ kính mờ ấm cho header / nhãn */
+.glass-warm {
+  background: linear-gradient(180deg, rgba(38, 26, 16, 0.5), rgba(18, 14, 10, 0.62));
+  border: 1px solid rgba(255, 220, 160, 0.32);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 235, 190, 0.22);
+  backdrop-filter: blur(10px) saturate(130%);
+}
+
+/* Vignette điện ảnh cho khung vườn */
+.cinema-vignette::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 46%,
+    transparent 46%,
+    rgba(6, 12, 9, 0.32) 78%,
+    rgba(4, 9, 7, 0.62) 100%
+  );
+}
+
+/* Hạt bụi vàng bay chậm (rất nhẹ, chỉ vài phần tử) */
+@keyframes moteFloat {
+  0% { transform: translate3d(0, 0, 0) scale(0.8); opacity: 0; }
+  12% { opacity: 0.85; }
+  100% { transform: translate3d(14px, -120px, 0) scale(1.15); opacity: 0; }
+}
+.mote {
+  animation: moteFloat linear infinite;
+}
+
+/* Tim bay lên ở màn kết */
+@keyframes heartRise {
+  0% { transform: translateY(0) scale(0.6) rotate(-6deg); opacity: 0; }
+  15% { opacity: 0.95; }
+  100% { transform: translateY(-46vh) scale(1.05) rotate(8deg); opacity: 0; }
+}
+.heart-rise { animation: heartRise ease-in-out infinite; }

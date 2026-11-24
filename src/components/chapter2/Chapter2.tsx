@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import RainCanvas from "../RainCanvas";
 import { GoldenKeyIcon } from "../PortalGate";
@@ -8,6 +16,51 @@ import { PlayerBehaviorTracker, type PredictionSnapshot } from "./bossAI";
 import { avatar, bossIdle, hall, heroKneel, heroStand, s1, s2, s3 } from "./assets";
 
 type Phase = "title" | "quest" | "pray" | "awaken" | "dodge" | "boss" | "dead" | "clear";
+
+/**
+ * Kho dự đoán AI dùng useSyncExternalStore: khi AI cập nhật dự đoán (mỗi lần
+ * đổi làn, mỗi đợt, hoặc kết quả Gemini trả về) CHỈ thẻ hiển thị re-render —
+ * không còn re-render toàn bộ Chapter2 (3 tượng + 3 canvas + toàn bộ HUD).
+ */
+let predSnapshot: PredictionSnapshot | null = null;
+const predListeners = new Set<() => void>();
+
+function setPredSnapshot(next: PredictionSnapshot) {
+  predSnapshot = next;
+  predListeners.forEach((l) => l());
+}
+
+function usePrediction(): PredictionSnapshot | null {
+  return useSyncExternalStore(
+    (cb) => {
+      predListeners.add(cb);
+      return () => predListeners.delete(cb);
+    },
+    () => predSnapshot,
+    () => predSnapshot
+  );
+}
+
+/** Thẻ ML đọc vị: chỉ component này re-render khi AI cập nhật dự đoán. */
+const MlReadBadge = memo(function MlReadBadge() {
+  const pred = usePrediction();
+  if (!pred) return null;
+  return (
+    <div className="mt-1 inline-flex items-center gap-1 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
+      <span>
+        {pred.warmedUp
+          ? `ML ĐỌC VỊ ${pred.adaptRate}% · MẪU ${pred.samples} · [${LANE_NAMES[pred.predictedLane]}]`
+          : `ML THU THẬP ${pred.samples}/3`}
+      </span>
+      {pred.geminiStatus === "active" && (
+        <span className="border border-cyan-400/50 bg-cyan-950/60 px-1 text-[6.5px] text-cyan-200">
+          + GEMINI
+        </span>
+      )}
+    </div>
+  );
+});
 type Threat = { lanes: number[]; mode: "warn" | "strike"; id: number; aiLocked?: boolean };
 type Pop = { id: number; text: string; kind: "perfect" | "dodge" | "hit" | "warn" };
 
@@ -62,7 +115,17 @@ export default function Chapter2({
   );
   const dodgeTrackerRef = useRef<PlayerBehaviorTracker | null>(null);
   if (!dodgeTrackerRef.current) dodgeTrackerRef.current = new PlayerBehaviorTracker(true);
-  const [dodgePred, setDodgePred] = useState<PredictionSnapshot>(() => dodgeTrackerRef.current!.predict(1));
+  /** Dự đoán mới nhất — đọc bằng ref nên không gây re-render. */
+  const predRef = useRef<PredictionSnapshot>(dodgeTrackerRef.current!.predict(1));
+  const publishPred = useCallback((snap: PredictionSnapshot) => {
+    predRef.current = snap;
+    setPredSnapshot(snap);
+  }, []);
+
+  // Đồng bộ kho ngoài mỗi khi component mount lại (đổi trận / hồi sinh).
+  useEffect(() => {
+    setPredSnapshot(predRef.current);
+  }, []);
 
   const phaseRef = useRef<Phase>(initialPhase);
   const hpRef = useRef(MAX_HP);
@@ -100,7 +163,7 @@ export default function Chapter2({
     const onKeyChange = () => {
       if (!dodgeTrackerRef.current) return;
       dodgeTrackerRef.current.refreshGeminiState();
-      setDodgePred(dodgeTrackerRef.current.predict(laneRef.current));
+      publishPred(dodgeTrackerRef.current.predict(laneRef.current));
     };
     window.addEventListener("sl-gemini-key-changed", onKeyChange);
     return () => window.removeEventListener("sl-gemini-key-changed", onKeyChange);
@@ -139,7 +202,7 @@ export default function Chapter2({
       const th = threatRef.current;
       const reaction = threatWarnAtRef.current > 0 ? performance.now() - threatWarnAtRef.current : undefined;
       dodgeTrackerRef.current!.recordMove(old, n, reaction, true);
-      setDodgePred(dodgeTrackerRef.current!.predict(n));
+      publishPred(dodgeTrackerRef.current!.predict(n));
       if (th && th.mode === "warn" && th.lanes.includes(old) && !th.lanes.includes(n)) {
         escapeRef.current = performance.now();
       }
@@ -174,6 +237,8 @@ export default function Chapter2({
     let raf = 0;
     let last = performance.now();
     let g = 0;
+    let painted = -1;
+    let lastPaint = 0;
     setGauge(0);
     let nextGaze = last + 2200;
     let gz: { statue: number; start: number; mode: "warn" | "on"; hit: boolean } | null = null;
@@ -183,7 +248,15 @@ export default function Chapter2({
       last = now;
       g += (holdRef.current ? 22 : -18) * dt;
       g = Math.max(0, Math.min(100, g));
-      setGauge(g);
+      // Chỉ setState khi giá trị nguyên thay đổi: trước đây gọi setGauge mỗi
+      // frame khiến TOÀN BỘ cây Chapter2 re-render 60 lần/giây (nguyên nhân lag).
+      // Giới hạn ~15 lần/giây (đủ mượt cho thanh % và hào quang) thay vì 60.
+      const rounded = Math.round(g);
+      if (rounded !== painted && now - lastPaint >= 66) {
+        painted = rounded;
+        lastPaint = now;
+        setGauge(rounded);
+      }
 
       if (!gz && now > nextGaze) {
         gz = { statue: Math.floor(Math.random() * 3), start: now, mode: "warn", hit: false };
@@ -234,6 +307,7 @@ export default function Chapter2({
     if (phase !== "dodge") return;
     let cancelled = false;
     const tracker = dodgeTrackerRef.current!;
+    tracker.beginBattle();
     laneRef.current = 1;
     setLane(1);
     const firstWave = startWaveRef.current;
@@ -249,23 +323,40 @@ export default function Chapter2({
         if (cancelled) return;
         setWave(i + 1);
         const warn = Math.max(690, 1220 - i * 48);
-        const count: 1 | 2 = i < 3 ? 1 : 2;
+
+        // Đội hình đòn đánh đa dạng dần theo đợt:
+        //   đợt 1-2: 1 tia
+        //   đợt 3-8: 2 tia — sát nhau HOẶC hai bên (hai bên trước đây không có)
+        //   đợt 9-12: thỉnh thoảng ĐỢT KÉP (né nhịp 1 rồi phải né tiếp nhịp 2)
         const adaptiveChance = i < 3 ? 0.45 : i < 7 ? 0.72 : 0.9;
-        const picked = tracker.pickTargetedLanes(laneRef.current, count, adaptiveChance);
-        let lanes = picked.lanes;
-        setDodgePred(picked.predicted);
+        const isDouble = i >= 8 && Math.random() < (i >= 10 ? 0.5 : 0.32);
+        const oneLane = i < 2;
+
+        const picked = tracker.pickTargetedLanes(laneRef.current, oneLane ? 1 : 2, adaptiveChance, {
+          wave: i,
+          // "2 tia hai bên" mở từ đợt 3 (trước đây không bao giờ xuất hiện)
+          allowSplit: i >= 2,
+        });
+        const double = isDouble ? tracker.pickDoubleStrike(laneRef.current, 0.9, i) : null;
+        let lanes = double ? double.first : picked.lanes;
+        publishPred(double ? double.predicted : picked.predicted);
         threatWarnAtRef.current = performance.now();
-        const aiLocked = picked.aiUsed && i >= 2;
+        const aiLocked = (double ? double.aiUsed : picked.aiUsed) && i >= 2;
         setThreatBoth({ lanes, mode: "warn", id: i, aiLocked });
+        if (double) showPop("ĐỢT KÉP!", "warn");
 
         // Đợt 9 & 11: tượng thần đọc vị bước né sớm và đổi hướng 1 lần (vẫn cho 580ms phản ứng)
-        if ((i === 8 || i === 10) && count === 2 && picked.predicted.warmedUp) {
+        if ((i === 8 || i === 10) && !double && picked.predicted.warmedUp) {
           await sleep(Math.round(warn * 0.55));
           if (cancelled) return;
           if (!lanes.includes(laneRef.current)) {
-            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92);
+            const retarget = tracker.pickTargetedLanes(laneRef.current, 2, 0.92, {
+              wave: i,
+              allowSplit: true,
+              allowFull: false,
+            });
             lanes = retarget.lanes;
-            setDodgePred(retarget.predicted);
+            publishPred(retarget.predicted);
             threatWarnAtRef.current = performance.now();
             setThreatBoth({ lanes, mode: "warn", id: i, aiLocked: true });
             showPop("ĐỔI HƯỚNG!", "warn");
@@ -293,10 +384,40 @@ export default function Chapter2({
           showPop("NÉ!", "dodge");
         }
         tracker.recordStay(laneRef.current, true);
-        setDodgePred(tracker.predict(laneRef.current));
+        publishPred(tracker.predict(laneRef.current));
         tracker.maybeSyncGemini(laneRef.current, 1, "gaze", (s) => {
-          if (!cancelled) setDodgePred(s);
+          if (!cancelled) publishPred(s);
         });
+
+        // ---- Nhịp 2 của ĐỢT KÉP: đánh đúng làn vừa an toàn, buộc né tiếp ----
+        if (double) {
+          await sleep(300);
+          if (cancelled) return;
+          const saved = [0, 1, 2].filter((l) => !double.second.includes(l))[0];
+          const warn2 = 620;
+          threatWarnAtRef.current = performance.now();
+          setThreatBoth({ lanes: double.second, mode: "warn", id: i, aiLocked: true });
+          showPop(saved !== undefined && saved === laneRef.current ? "NÉ TIẾP!" : "ĐỔI LÀN!", "warn");
+          await sleep(warn2);
+          if (cancelled) return;
+          setThreatBoth({ lanes: double.second, mode: "strike", id: i, aiLocked: true });
+          setStrikeKey((k) => k + 1);
+          triggerShake(10);
+          if (double.second.includes(laneRef.current)) {
+            if (damage()) showPop("-1 HP", "hit");
+          } else if (performance.now() - escapeRef.current < 520) {
+            perfectCount++;
+            setPerfects(perfectCount);
+            showPop("PHÁ ĐỢT KÉP!", "perfect");
+          } else {
+            showPop("NÉ!", "dodge");
+          }
+          tracker.recordStay(laneRef.current, true);
+          await sleep(400);
+          if (cancelled) return;
+          setThreatBoth(null);
+        }
+
         threatWarnAtRef.current = 0;
         await sleep(460);
         if (cancelled) return;
@@ -519,7 +640,7 @@ export default function Chapter2({
         {(phase === "dodge" || phase === "dead") &&
           [0, 1, 2].map((i) => {
             const st = threat && threat.lanes.includes(i) ? threat.mode : null;
-            const isPred = threat?.aiLocked && dodgePred.predictedLane === i;
+            const isPred = threat?.aiLocked && predRef.current.predictedLane === i;
             return (
               <div
                 key={i}
@@ -658,7 +779,11 @@ export default function Chapter2({
                 animate={{
                   opacity: standing ? 0 : 1,
                   y: holding ? "1.5%" : "-2.5%",
-                  filter: `drop-shadow(0 0 ${8 + gauge / 4}px rgba(80,150,255,${0.5 + gauge / 200}))`,
+                }}
+                style={{
+                  // KHÔNG animate filter theo từng frame (re-raster ảnh -> lag).
+                  // Hào quang đã có lớp radial-gradient phía sau đảm nhiệm.
+                  filter: "drop-shadow(0 0 12px rgba(80,150,255,0.65))",
                 }}
                 transition={{ duration: 0.4 }}
               />
@@ -697,8 +822,8 @@ export default function Chapter2({
           )}
         </AnimatePresence>
 
-        {/* tàn lửa + sương */}
-        <RainCanvas rain={false} intensity={1} />
+        {/* tàn lửa + sương — giảm mật độ để nhường GPU cho hiệu ứng chính */}
+        <RainCanvas rain={false} intensity={0.55} />
         <div className="mist pointer-events-none absolute -inset-x-20 bottom-0 h-1/3 bg-[radial-gradient(ellipse_at_center,rgba(120,140,255,0.16),transparent_65%)]" />
       </motion.div>
 
@@ -782,21 +907,25 @@ export default function Chapter2({
                   transition={{ duration: 0.5 }}
                 />
               </div>
-              {phase === "dodge" && wave >= 3 && (
-                <div className="mt-1 inline-flex items-center gap-1 rounded-sm border border-violet-400/35 bg-[#12061e]/85 px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] text-violet-200">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
-                  <span>
-                    {dodgePred.warmedUp
-                      ? `ML ĐỌC VỊ ${dodgePred.adaptRate}% · MẪU ${dodgePred.samples} · [${LANE_NAMES[dodgePred.predictedLane]}]`
-                      : `ML THU THẬP ${dodgePred.samples}/3`}
-                  </span>
-                  {dodgePred.geminiStatus === "active" && (
-                    <span className="border border-cyan-400/50 bg-cyan-950/60 px-1 text-[6.5px] text-cyan-200">
-                      + GEMINI
-                    </span>
-                  )}
+              {phase === "dodge" && threat && (
+                <div
+                  className={`mt-1 inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 font-sys text-[7px] tracking-[0.14em] ${
+                    threat.lanes.length === 2 && threat.lanes.join(",") === "0,2"
+                      ? "border-amber-300/60 bg-amber-950/60 text-amber-200"
+                      : "border-sky-400/40 bg-sky-950/60 text-sky-200"
+                  }`}
+                >
+                  <span className="h-1 w-1 rounded-full bg-current" />
+                  {threat.lanes.length === 1
+                    ? "ĐỘI HÌNH · 1 TIA"
+                    : threat.lanes.length === 3
+                    ? "ĐỘI HÌNH · TOÀN SÀN"
+                    : threat.lanes.join(",") === "0,2"
+                    ? "ĐỘI HÌNH · 2 TIA HAI BÊN"
+                    : "ĐỘI HÌNH · 2 TIA SÁT NHAU"}
                 </div>
               )}
+              {phase === "dodge" && wave >= 3 && <MlReadBadge />}
             </div>
           )}
         </>
