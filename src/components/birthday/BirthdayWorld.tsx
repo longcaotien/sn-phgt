@@ -348,23 +348,21 @@ export default function BirthdayWorld({
 
               {/* Tiêu đề: chữ gradient vàng-hồng + quầng sáng thở */}
               <div className="relative mt-1.5">
-                <div
+                <motion.div
                   aria-hidden
-                  className="pointer-events-none absolute inset-x-0 -top-2 mx-auto h-16 w-4/5 rounded-full bg-[radial-gradient(ellipse,rgba(255,214,120,0.28),transparent_70%)] blur-2xl"
-                />
-                <motion.h1
-                  animate={{ textShadow: [
-                    "0 4px 26px rgba(0,0,0,0.7), 0 0 30px rgba(255,214,120,0.35)",
-                    "0 4px 26px rgba(0,0,0,0.7), 0 0 54px rgba(255,206,140,0.6)",
-                    "0 4px 26px rgba(0,0,0,0.7), 0 0 30px rgba(255,214,120,0.35)",
-                  ] }}
+                  animate={{ opacity: [0.55, 1, 0.55], scale: [0.96, 1.04, 0.96] }}
                   transition={{ duration: 5.5, repeat: Infinity, ease: "easeInOut" }}
-                  className="title-grad-warm relative text-balance text-[22px] font-black leading-tight tracking-tight sm:text-4xl lg:text-5xl"
-                >
+                  className="pointer-events-none absolute inset-x-0 -top-2 mx-auto h-16 w-4/5 rounded-full bg-[radial-gradient(ellipse,rgba(255,214,120,0.38),transparent_70%)] blur-2xl"
+                />
+                {/* Chữ gradient + drop-shadow tĩnh. Việc animate `textShadow`
+                    buộc trình duyệt vẽ lại toàn bộ glyph mỗi khung (rất đắt vì
+                    chữ có gradient), nên nhịp "thở" được chuyển sang lớp quầng
+                    sáng phía trên — chỉ đổi opacity. */}
+                <h1 className="title-grad-warm relative text-balance text-[22px] font-black leading-tight tracking-tight sm:text-4xl lg:text-5xl">
                   {stage === "fireworks"
                     ? "Happy Birthday Phạm Hoàng Gia Trí!"
                     : "Chúc Mừng Sinh Nhật Gia Trí"}
-                </motion.h1>
+                </h1>
               </div>
               <p
                 className="mx-auto mt-1 max-w-lg text-[11px] font-medium text-amber-50/95 sm:text-sm"
@@ -465,47 +463,40 @@ export default function BirthdayWorld({
                   className="group relative block focus:outline-none"
                 >
                   {/* Hào quang ấm phía sau (tách nhân vật khỏi nền) */}
-                  <div className="pointer-events-none absolute inset-0 -z-10 scale-110 rounded-full bg-[radial-gradient(ellipse_at_50%_65%,rgba(255,214,150,0.2),transparent_66%)] blur-lg" />
+                  <div className="contain-paint pointer-events-none absolute inset-0 -z-10 scale-110 rounded-full bg-[radial-gradient(ellipse_at_50%_65%,rgba(255,214,150,0.2),transparent_66%)] blur-lg" />
 
                   {/* Chuyển động anime Live2D-style: thở đa nhịp + nghiêng theo gió + nhún vai */}
-                  <motion.div
-                    animate={{
-                      y: [0, -2.6, -1, -2.2, 0],
-                      rotate: [-0.5, 0.8, 0.1, -0.6, -0.5],
-                      scaleY: [1, 1.011, 1.004, 1.009, 1],
-                      scaleX: [1, 0.996, 1, 0.997, 1],
-                    }}
-                    transition={{ duration: 5.4, repeat: Infinity, ease: "easeInOut" }}
+                  <div
                     style={{ transformOrigin: "bottom center" }}
-                    className="relative"
+                    className="maid-breathe will-transform relative"
                   >
-                    {/* Gợn gió: tóc & váy rung rất nhẹ so le với nhịp thở */}
-                    <motion.img
+                    {/* Ảnh hầu gái: KHÔNG animate filter/box-shadow ở đây.
+                        Mỗi lần `filter` thay đổi, trình duyệt phải rasterize
+                        lại toàn bộ ảnh 440×728 trên CPU. Thay vào đó nhịp thở
+                        nằm ở lớp transform phía trên, còn ánh nắng ấm được
+                        giả lập bằng một lớp overlay opacity (chỉ compositor). */}
+                    <img
                       src={maidBook}
                       alt="Cô hầu gái ngồi đọc sách dưới gốc cây"
                       draggable={false}
-                      animate={{
-                        filter: [
-                          "brightness(1) saturate(1)",
-                          "brightness(1.045) saturate(1.06)",
-                          "brightness(1) saturate(1)",
-                        ],
-                      }}
-                      transition={{ duration: 6.2, repeat: Infinity, ease: "easeInOut" }}
-                      className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition group-hover:brightness-110 group-hover:drop-shadow-[0_16px_34px_rgba(0,0,0,0.6)] sm:h-[37vh] lg:h-[42vh]"
+                      className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition duration-300 group-hover:brightness-110 sm:h-[37vh] lg:h-[42vh]"
                     />
-                    {/* Lọn tóc mai lay động */}
+                    {/* Ánh nắng ấm lay động — chỉ đổi opacity nên miễn phí cho GPU */}
                     <motion.span
                       aria-hidden
-                      animate={{ rotate: [-1.6, 2.2, -1.2, 1.8, -1.6], x: [-1, 1.4, -0.6, 1, -1] }}
-                      transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
+                      animate={{ opacity: [0.05, 0.2, 0.05] }}
+                      transition={{ duration: 6.2, repeat: Infinity, ease: "easeInOut" }}
+                      className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_62%_22%,rgba(255,226,160,0.85),transparent_58%)] mix-blend-soft-light"
+                    />
+                    {/* Lọn tóc mai lay động */}
+                    <span
+                      aria-hidden
+                      className="hair-sway pointer-events-none absolute left-[10%] top-[10%] h-[38%] w-[16%]"
                       style={{
                         transformOrigin: "top right",
                         background:
                           "radial-gradient(ellipse at 30% 40%, rgba(28,22,20,0.55), rgba(28,22,20,0) 68%)",
-                        filter: "blur(1.2px)",
                       }}
-                      className="pointer-events-none absolute left-[10%] top-[10%] h-[38%] w-[16%]"
                     />
                     {/* Trang sách lật (vệt trắng quét rất nhẹ) */}
                     <motion.span
@@ -514,7 +505,7 @@ export default function BirthdayWorld({
                       transition={{ duration: 5.6, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.4 }}
                       className="pointer-events-none absolute left-[47%] top-[41%] h-[6%] w-[13%] rounded-sm bg-gradient-to-r from-white/0 via-white/55 to-white/0 blur-[1px]"
                     />
-                  </motion.div>
+                  </div>
                 </button>
               </div>
 
@@ -529,22 +520,20 @@ export default function BirthdayWorld({
                 <div className="pointer-events-none absolute -bottom-2 left-1/2 h-7 w-56 -translate-x-1/2 rounded-full bg-black/55 blur-lg sm:w-72" />
 
                 {/* Hào quang hoàng hôn ấm áp phía sau nhân vật */}
-                <div className="pointer-events-none absolute inset-0 -z-10 rounded-full bg-[radial-gradient(ellipse_at_50%_58%,rgba(255,206,130,0.26),transparent_68%)] blur-xl" />
+                <div className="contain-paint pointer-events-none absolute inset-0 -z-10 rounded-full bg-[radial-gradient(ellipse_at_50%_58%,rgba(255,206,130,0.26),transparent_68%)] blur-xl" />
 
                 <motion.div
                   animate={
+                    // Khi cắt bánh xong: nhún lên xuống 2 nhịp reo vui (chạy 1 lần).
+                    // Bình thường: KHÔNG animate bằng JS — nhịp thở do CSS
+                    // `.maid-breathe-slow` lo, để main thread rảnh cho gameplay.
                     cakeCut
-                      ? // Niềm vui: nhún lên xuống 2 nhịp rồi trở lại nhịp thở
-                        { y: [0, -14, 0, -8, 0], rotate: [-0.4, 1.6, -0.8, 1, -0.4], scaleY: [1, 1.02, 1, 1.012, 1] }
-                      : { y: [0, -3.2, -1.2, -2.6, 0], rotate: [-0.4, 0.6, 0.05, -0.5, -0.4], scaleY: [1, 1.009, 1.003, 1.007, 1] }
+                      ? { y: [0, -14, 0, -8, 0], rotate: [-0.4, 1.6, -0.8, 1, -0.4], scaleY: [1, 1.02, 1, 1.012, 1] }
+                      : {}
                   }
-                  transition={
-                    cakeCut
-                      ? { duration: 1.5, repeat: 1, ease: "easeInOut" }
-                      : { duration: 4.6, repeat: Infinity, ease: "easeInOut" }
-                  }
+                  transition={cakeCut ? { duration: 1.5, repeat: 1, ease: "easeInOut" } : undefined}
                   style={{ transformOrigin: "bottom center" }}
-                  className="relative"
+                  className={`will-transform relative ${cakeCut ? "" : "maid-breathe-slow"}`}
                 >
                   <img
                     src={maidCake}
@@ -553,40 +542,38 @@ export default function BirthdayWorld({
                     className="h-[40vh] w-auto max-w-none select-none object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.62)] sm:h-[56vh] lg:h-[61vh]"
                   />
                   {/* Tóc mai lay động theo gió hoàng hôn */}
-                  <motion.span
+                  <span
                     aria-hidden
-                    animate={{ rotate: [-1.4, 2, -1, 1.6, -1.4], x: [-0.8, 1.2, -0.4, 0.9, -0.8] }}
-                    transition={{ duration: 3.9, repeat: Infinity, ease: "easeInOut" }}
+                    className="hair-sway-slow pointer-events-none absolute left-[8%] top-[9%] h-[36%] w-[15%]"
                     style={{
                       transformOrigin: "top right",
                       background:
                         "radial-gradient(ellipse at 30% 40%, rgba(26,20,18,0.5), rgba(26,20,18,0) 68%)",
-                      filter: "blur(1.4px)",
                     }}
-                    className="pointer-events-none absolute left-[8%] top-[9%] h-[36%] w-[15%]"
                   />
 
                   {/* Hào quang nắng vàng hoàng hôn tỏa nhẹ từ sau bánh */}
-                  <div className="pointer-events-none absolute left-[6%] top-[22%] h-[30%] w-[36%] rounded-full bg-[radial-gradient(circle,rgba(255,228,150,0.36),transparent_70%)] blur-xl" />
+                  <div className="contain-paint pointer-events-none absolute left-[6%] top-[22%] h-[30%] w-[36%] rounded-full bg-[radial-gradient(circle,rgba(255,228,150,0.36),transparent_70%)] blur-xl" />
 
                   {/* Đốm sáng phép thuật tụ quanh bánh kem (chỉ khi chưa cắt) */}
                   {!cakeCut && <CakeFireflies count={7} />}
 
                   {/* 3 Ngọn lửa nến mảnh & sáng dịu kiểu anime (không thô) */}
                   {CANDLE_POS.map((pos, idx) => (
-                    <motion.span
+                    // Ngọn nến: CSS thay cho animate liên tục. Mỗi ngọn có chu kỳ
+                    // và độ trễ riêng để "rung" tự nhiên, không đồng bộ.
+                    <span
                       key={idx}
-                      animate={{
-                        scale: [1, 1.18, 0.94, 1.12, 1],
-                        rotate: [-4, 5, -3, 3, -4],
-                        opacity: [0.85, 1, 0.8, 1, 0.85],
+                      style={{
+                        left: pos.left,
+                        top: pos.top,
+                        animationDuration: `${0.85 + idx * 0.14}s`,
+                        animationDelay: `${idx * -0.21}s`,
                       }}
-                      transition={{ duration: 0.85 + idx * 0.14, repeat: Infinity, ease: "easeInOut" }}
-                      style={{ left: pos.left, top: pos.top }}
-                      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 mix-blend-screen"
+                      className="flame-flick pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 mix-blend-screen"
                     >
                       <span className="block h-3 w-1.5 rounded-full bg-gradient-to-t from-amber-500 via-yellow-200 to-white shadow-[0_0_12px_3px_rgba(253,224,71,0.85)] sm:h-3.5 sm:w-1.5" />
-                    </motion.span>
+                    </span>
                   ))}
 
                   {/* Vùng tương tác cắt bánh đặt khớp lên chiếc bánh trên tay cô ấy */}
@@ -778,7 +765,7 @@ export default function BirthdayWorld({
               {/* Đế pha lê phát sáng dưới hộp nhạc */}
               <div
                 aria-hidden
-                className="pointer-events-none absolute -bottom-3 left-1/2 h-10 w-[min(78vw,420px)] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(ellipse,rgba(255,214,140,0.35),transparent_70%)] blur-xl"
+                className="contain-paint pointer-events-none absolute -bottom-3 left-1/2 h-10 w-[min(78vw,420px)] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(ellipse,rgba(255,214,140,0.35),transparent_70%)] blur-xl"
               />
               {musicOn && (
                 <div className="pointer-events-none relative mb-1 flex gap-6 text-amber-200">
@@ -859,19 +846,21 @@ export default function BirthdayWorld({
 
                   <div className="my-3 flex h-7 items-end gap-1.5">
                     {[0.6, 1, 0.75, 0.95, 0.55, 0.85].map((h, i) => (
-                      <motion.span
+                      // Thanh sóng nhạc: dùng CSS thay vì animate `height` bằng JS.
+                      // `height` gây layout mỗi khung hình (đắt nhất trong các
+                      // thuộc tính animate); CSS keyframes trên thanh nhỏ thì
+                      // chỉ tốn vài phần trăm một frame.
+                      <span
                         key={i}
-                        animate={
-                          musicOn
-                            ? { height: ["25%", `${h * 100}%`, "35%", `${h * 85}%`] }
-                            : { height: "20%" }
-                        }
-                        transition={
-                          musicOn
-                            ? { duration: 0.7 + i * 0.12, repeat: Infinity, repeatType: "reverse" }
-                            : { duration: 0.3 }
-                        }
-                        className="w-2 rounded-t-full bg-gradient-to-t from-amber-400 to-rose-300"
+                        className={`w-2 rounded-t-full bg-gradient-to-t from-amber-400 to-rose-300 ${
+                          musicOn ? "eq-bar" : ""
+                        }`}
+                        style={{
+                          height: musicOn ? `${h * 100}%` : "20%",
+                          animationDuration: `${0.7 + i * 0.12}s`,
+                          animationDelay: `${i * 0.08}s`,
+                          ["--eq-max" as string]: `${Math.round(h * 100)}%`,
+                        }}
                       />
                     ))}
                   </div>

@@ -1,5 +1,12 @@
 import { useEffect, useRef } from "react";
-import { createFrameLoop, getMaxDpr, lowEnd, particleScale } from "../../utils/perf";
+import {
+  createFrameLoop,
+  getMaxDpr,
+  lowEnd,
+  particleScale,
+  reportFrame,
+  getQuality,
+} from "../../utils/perf";
 import type { SkillKind } from "./bossAI";
 
 export type VfxBurst = {
@@ -326,7 +333,11 @@ export default function BossVfxCanvas({
     resize();
     // shadowBlur trên canvas là "blur mềm" chạy trên CPU/GPU mỗi frame và rất đắt.
     // Trên máy yếu ta tắt hẳn glow, bù lại bằng alpha cao hơn.
-    const GLOW = lowEnd ? 0 : 1;
+    // `GLOW` (bóng mờ) là thứ đắt nhất trong canvas 2D. Giữ dạng hàm để có thể
+    // tắt ngay khi bộ điều tiết phát hiện FPS tụt — kể cả trên máy "không yếu"
+    // theo dò phần cứng (GPU tích hợp yếu, đang chạy tác vụ nặng...).
+    const glowOn = () => !lowEnd && getQuality() >= 2;
+    let GLOW = glowOn() ? 1 : 0;
     let resizeRaf = 0;
     const onResize = () => {
       cancelAnimationFrame(resizeRaf);
@@ -358,13 +369,18 @@ export default function BossVfxCanvas({
 
     // Máy yếu: vẽ 30fps (mắt gần như không phân biệt được với hiệu ứng hạt,
     // nhưng CPU/GPU giảm ~50%). Giữ dt thật để chuyển động không bị chậm.
-    const minFrameMs = lowEnd ? 32 : 0;
+    // Nếu bộ điều tiết hạ chất lượng giữa chừng, tự giảm tiếp xuống 30/24fps.
     let accDt = 0;
 
     const loop = (now: number, dt: number) => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       if (w === 0 || h === 0) return;
+      // Cập nhật cờ glow theo mức chất lượng hiện tại (rẻ: so sánh 1 số).
+      GLOW = glowOn() ? 1 : 0;
+      reportFrame(now);
+      const q = getQuality();
+      const minFrameMs = lowEnd || q < 2 ? 32 : 0;
       if (minFrameMs) {
         accDt += dt * 1000;
         if (accDt < minFrameMs) return;
