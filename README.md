@@ -294,3 +294,37 @@ const LINES = { entry: entrySrc, cake: cakeSrc, newLine: newSrc };
 
 Sau đó gọi `maidVoice.say("newLine")`. Giữ âm lượng đỉnh khoảng −3 dB và độ dài
 dưới 12 giây để không lấn nhạc nền.
+
+## Hoạt ảnh nói & phản ứng của hai cô hầu gái
+
+### Khẩu hình khi nói (`TalkingMouth.tsx`)
+
+Ảnh nhân vật là tranh tĩnh nên không có khẩu hình thật. Giải pháp: phủ lên
+**đúng vị trí miệng** một hình elip tối màu rồi cho co giãn theo nhịp.
+
+- Toạ độ miệng đo trực tiếp từ `maid-cake.webp` (440×728): tâm miệng ở
+  **(210, 178) px** → `left: 47,7%`, `top: 24,5%`, rộng `6,4%`.
+- Nhịp môi là **tổng của 3 hàm sin lệch tần** (11,3 / 17,7 / 29,1 rad·s⁻¹) nên
+  không đều như máy, giống người nói thật.
+- Cập nhật **24 lần/giây** (không phải 60) — khẩu hình không cần mượt hơn, tiết
+  kiệm 60 % công ghi style.
+- Ghi `style.transform` trực tiếp trong `requestAnimationFrame` trên **một phần
+  tử duy nhất**, không dùng framer-motion.
+- Tôn trọng `prefers-reduced-motion`: miệng mở nhẹ và đứng yên.
+- Hai câu thoại dùng hai instance (khác độ mở): câu chào mở nhẹ (`depth 0,72`),
+  câu khen sau khi cắt bánh mở rộng hơn (`depth 0,85`).
+
+### Cô đọc sách đứng dậy vỗ tay
+
+Khi cô hầu gái nâng bánh **nói**, cô đang ngồi đọc sách sẽ **đứng dậy vỗ tay**;
+nói xong thì **ngồi xuống lại**.
+
+- Ảnh tư thế đứng: `src/assets/maid-clap.webp` (560×1425, 77 KB) — cùng thiết kế
+  nhân vật, đang đứng vỗ tay, mắt cười.
+- Hai ảnh chồng lên nhau trong cùng một khung, crossfade 0,45 s kèm `scale` +
+  `y` nhẹ để không bị "nhảy" hình.
+- Ảnh đứng neo `bottom-0` và cao hơn (30/52/58 vh so với 21/37/42 vh) để tỉ lệ
+  cơ thể đúng khi đứng. Bề rộng hẹp hơn ảnh ngồi ~5 vh nên không tràn lề.
+- Đồng bộ qua `voice.speaking`: bật ngay khi bắt đầu nói, tắt **trễ 600 ms**
+  để động tác ngồi xuống không bị cụt.
+- Hiệu ứng kèm: 3 vòng sóng toả từ bàn tay + chữ 「パチパチ ♪」 bay lên.
