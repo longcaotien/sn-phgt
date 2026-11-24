@@ -427,12 +427,29 @@ https://<project-ref>.supabase.co/auth/v1/callback
 
 **5. Deploy 2 edge function**
 
+Cách dễ nhất — không cần cài gì ở máy:
+
+1. Lấy token: https://supabase.com/dashboard/account/tokens → *Generate new token*
+2. Thêm vào repo: Settings → Secrets and variables → Actions → New secret
+   - Name: `SUPABASE_ACCESS_TOKEN`
+   - Secret: token vừa tạo
+3. Vào tab **Actions** → **Deploy Edge Functions** → *Run workflow*
+
+Workflow tự động deploy cả 2 function với đúng `verify_jwt` khai báo trong
+`supabase/config.toml`. Mỗi lần sửa file trong `supabase/functions/**` nó cũng
+tự chạy lại.
+
+Hoặc dùng CLI nếu máy đã có Node:
+
 ```bash
+npm install -g supabase
 supabase login
-supabase link --project-ref <project-ref>
-supabase functions deploy gemini --no-verify-jwt
-supabase functions deploy gemini-key
+supabase functions deploy gemini     --project-ref <project-ref>
+supabase functions deploy gemini-key --project-ref <project-ref>
 ```
+
+Không cần `supabase link` (lệnh đó đòi mật khẩu database) — cứ truyền
+`--project-ref` là đủ.
 
 `gemini` để `--no-verify-jwt` vì khách chưa đăng nhập vẫn phải qua được bước
 kiểm tra (function tự kiểm tra quyền bên trong). `gemini-key` thì **bắt buộc**
