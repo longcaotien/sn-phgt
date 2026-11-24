@@ -5,7 +5,7 @@
 //  - Người chơi KHÔNG bao giờ thấy key. Trình duyệt chỉ gửi prompt lên đây,
 //    function tự gắn key rồi gọi Google.
 //  - Key đọc từ biến môi trường GEMINI_API_KEY (ưu tiên) hoặc từ bảng
-//    private.secrets (do admin nhập trong trang quản trị).
+//    bảng app_secrets (do admin nhập trong trang quản trị).
 //  - Có giới hạn tần suất đơn giản theo user/IP để tránh bị lạm dụng quota.
 //
 //  Deploy:
@@ -88,12 +88,11 @@ Deno.serve(async (req) => {
     if (prof?.blocked) return json({ error: "Tài khoản của bạn đã bị tạm khoá." }, 403);
   }
 
-  // --- 3. Lấy key: ưu tiên biến môi trường, sau đó tới bảng private ---
+  // --- 3. Lấy key: ưu tiên biến môi trường, sau đó tới bảng app_secrets ---
   let apiKey = (Deno.env.get("GEMINI_API_KEY") ?? "").trim();
   if (!apiKey) {
     const { data: secret } = await admin
-      .schema("private")
-      .from("secrets")
+      .from("app_secrets")
       .select("value")
       .eq("key", "gemini_api_key")
       .maybeSingle();

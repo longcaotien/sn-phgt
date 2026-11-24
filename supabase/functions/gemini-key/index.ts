@@ -1,7 +1,7 @@
 // ============================================================================
 //  Edge Function: gemini-key
 //  Chỉ quản trị viên được đọc / ghi / xoá Gemini API key.
-//  Key được lưu ở schema `private` — KHÔNG có policy RLS nào cho trình duyệt,
+//  Key được lưu ở bảng `app_secrets` — RLS bật nhưng KHÔNG có policy nào,
 //  nên kể cả người dùng đã đăng nhập cũng không đọc được.
 //
 //  Deploy:
@@ -67,8 +67,7 @@ Deno.serve(async (req) => {
   // --- Đọc trạng thái: chỉ trả về key đã che, không trả key thật ---
   if (action === "status") {
     const { data } = await admin
-      .schema("private")
-      .from("secrets")
+      .from("app_secrets")
       .select("value, updated_at")
       .eq("key", "gemini_api_key")
       .maybeSingle();
@@ -92,8 +91,7 @@ Deno.serve(async (req) => {
     if (!/^[A-Za-z0-9_\-]+$/.test(clean)) return json({ error: "API key chứa ký tự lạ" }, 400);
 
     const { error } = await admin
-      .schema("private")
-      .from("secrets")
+      .from("app_secrets")
       .upsert(
         { key: "gemini_api_key", value: clean, updated_at: new Date().toISOString(), updated_by: access.userId ?? null },
         { onConflict: "key" }
@@ -107,7 +105,7 @@ Deno.serve(async (req) => {
 
   // --- Xoá key ---
   if (action === "clear") {
-    const { error } = await admin.schema("private").from("secrets").delete().eq("key", "gemini_api_key");
+    const { error } = await admin.from("app_secrets").delete().eq("key", "gemini_api_key");
     if (error) return json({ error: error.message }, 500);
     return json({ ok: true, configured: false, source: "none" });
   }

@@ -461,7 +461,7 @@ Mở `https://longcaotien.github.io/sn-phgt/admin.html`.
 
 | Trước | Sau |
 | --- | --- |
-| Lưu ở `localStorage` → mở DevTools là đọc được | Lưu ở schema `private`, **không có policy RLS nào** cho trình duyệt |
+| Lưu ở `localStorage` → mở DevTools là đọc được | Lưu ở bảng `app_secrets` với **RLS bật nhưng 0 policy** |
 | Trình duyệt gọi thẳng Google, key nằm trong URL | Trình duyệt gọi edge function, key do server gắn vào |
 
 Kiểm chứng: trong bundle gửi cho người dùng **không còn** chuỗi
@@ -475,7 +475,13 @@ $ grep -rl "generativelanguage" dist/assets/
 ### Ba lớp bảo vệ
 
 1. **RLS ở database** — người dùng thường không `select` được `profiles` của
-   người khác, không `update` được `site_config`, không đọc được `private.secrets`.
+   người khác, không `update` được `site_config`, không đọc được `app_secrets`.
+
+> Vì sao không dùng schema riêng tên `private`: PostgREST không cho client chọn
+> schema khi chưa khai báo trong *Exposed schemas*, nên edge function sẽ lỗi
+> 406. Để bảng trong `public` nhưng **bật RLS + không tạo policy nào** là cách
+> chắc chắn hơn: RLS bật mà 0 policy thì chặn tuyệt đối với `anon` và
+> `authenticated`, còn `service_role` vẫn dùng được.
    Đây là lớp thật; các lớp dưới chỉ là trải nghiệm.
 2. **Cổng ở giao diện** — hiện màn hình đăng nhập / bị chặn / bảo trì.
 3. **Edge function** — từ chối phục vụ AI nếu site đang đóng, người dùng bị
