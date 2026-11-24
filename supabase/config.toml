@@ -1,0 +1,23 @@
+# Cấu hình Supabase CLI cho project này.
+# Có file này thì `supabase link` và `supabase functions deploy` không hỏi lại
+# từng bước, và `verify_jwt` đúng ngay từ lần deploy đầu.
+
+project_id = "erzzhvoeltrovuvyufph"
+
+[functions.gemini]
+# Khách CHƯA đăng nhập vẫn phải gọi được (function tự kiểm tra quyền bên trong),
+# nên tắt xác thực JWT ở tầng gateway.
+verify_jwt = false
+
+[functions.gemini-key]
+# Chỉ admin dùng => BẮT BUỘC có JWT. Không bao giờ tắt dòng này.
+verify_jwt = true
+
+[auth]
+# Chỉ dùng cho `supabase start` ở máy; production cấu hình trên dashboard.
+enable_signup = true
+
+[auth.external.google]
+enabled = true
+# Client ID / Secret thật KHÔNG đặt ở đây (file này nằm trong git).
+# Điền trên dashboard: Authentication → Providers → Google
