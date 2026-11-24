@@ -328,6 +328,22 @@ Kiểm tra vùng khác biệt cũng xác nhận đúng ý đồ:
 Vùng miệng là nơi khác biệt **lớn nhất** (~3–4,5 lần các vùng khác) — đúng là
 chỉ miệng thay đổi.
 
+> **Lỗi đã gặp và cách phòng:** nền ảnh do AI sinh ra **không phải màu trắng
+> đều** (có vignette xám ~197 ở rìa), nên lệnh `floodfill` tách nền dừng lại
+> giữa chừng và để lại một tấm nền trắng đục che cả khung cảnh. Cách chắc chắn:
+> vì các frame đã khớp pixel tuyệt đối với ảnh gốc, **dùng lại chính alpha mask
+> của ảnh gốc**:
+>
+> ```bash
+> convert base.webp -alpha extract mask.png
+> convert frame.png -alpha off rgb.png
+> convert rgb.png mask.png -alpha off -compose CopyOpacity -composite out.png
+> ```
+>
+> Kiểm tra sau khi tách: tỉ lệ pixel đục của frame phải **bằng đúng** ảnh gốc
+> (`convert f.webp -alpha extract -threshold 50% -format "%[fx:mean]" info:`).
+> Nếu lệch, nền chưa được tách hết.
+
 **Nhịp đổi frame:** ngẫu nhiên 95–190 ms, và **luôn chọn frame khác frame hiện
 tại** để mắt luôn thấy thay đổi. Không dùng nhịp cố định vì sẽ trông như máy.
 

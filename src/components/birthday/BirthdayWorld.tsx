@@ -664,7 +664,7 @@ export default function BirthdayWorld({
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -6, scale: 0.96 }}
                       transition={{ type: "spring", stiffness: 220, damping: 22 }}
-                      className="pointer-events-none absolute bottom-[calc(100%-2%)] left-1/2 z-40 w-[min(78vw,300px)] -translate-x-1/2"
+                      className="pointer-events-none absolute bottom-[calc(100%-1%)] left-1/2 z-40 w-[min(84vw,290px)] -translate-x-1/2 max-[420px]:w-[72vw]"
                     >
                       <div className="relative rounded-2xl border border-rose-200/55 bg-gradient-to-b from-[#fffaf4]/96 to-[#ffeef0]/94 px-3.5 py-2.5 text-center shadow-[0_10px_32px_rgba(0,0,0,0.4)] backdrop-blur-sm">
                         <div className="mb-1 flex items-center justify-center gap-1.5">
@@ -681,8 +681,10 @@ export default function BirthdayWorld({
                             Hầu gái nói
                           </span>
                         </div>
-                        <p className="text-[13px] font-semibold leading-snug text-stone-800">{voiceCaption}</p>
-                        <p className="mt-0.5 text-[10px] leading-snug text-stone-500">
+                        <p className="text-[13px] font-semibold leading-snug text-stone-800 max-[420px]:text-[11px]">
+                          {voiceCaption}
+                        </p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-stone-500 max-[420px]:text-[9px]">
                           {voiceCaption.startsWith("わぁ")
                             ? "“A, cắt giỏi quá! Đúng là chủ nhân của em.”"
                             : "“Chúc mừng sinh nhật, thưa chủ nhân!”"}

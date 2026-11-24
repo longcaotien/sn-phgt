@@ -53,16 +53,32 @@ export const TalkingMaidSprite = memo(function TalkingMaidSprite({ active, alt =
 
     let timer = 0;
     let alive = true;
+    /**
+     * Đôi khi cô ấy ngừng nói giữa chừng (nghỉ lấy hơi) rồi nói tiếp.
+     * Nhịp đều tăm tắp sẽ trông như máy đang chạy, không giống người.
+     */
+    let pauseFor = 0;
 
     const next = () => {
       if (!alive) return;
-      // Chọn frame khác frame hiện tại (không lặp lại chính nó => luôn thấy đổi).
-      setIdx((prev) => {
-        let n = prev;
-        while (n === prev) n = Math.floor(Math.random() * FRAMES.length);
-        return n;
-      });
-      timer = window.setTimeout(next, HOLD_MIN + Math.random() * (HOLD_MAX - HOLD_MIN));
+
+      if (pauseFor > 0) {
+        // Đang nghỉ: hiện frame miệng đóng (index 1 = ảnh gốc) một nhịp.
+        setIdx(1);
+        pauseFor--;
+      } else {
+        // Chọn frame khác frame hiện tại (không lặp lại chính nó => luôn thấy đổi).
+        setIdx((prev) => {
+          let n = prev;
+          while (n === prev) n = Math.floor(Math.random() * FRAMES.length);
+          return n;
+        });
+        // ~12% khả năng nghỉ 1–3 nhịp trước khi nói tiếp
+        if (Math.random() < 0.12) pauseFor = 1 + Math.floor(Math.random() * 3);
+      }
+
+      const base = HOLD_MIN + Math.random() * (HOLD_MAX - HOLD_MIN);
+      timer = window.setTimeout(next, pauseFor > 0 ? base * 1.3 : base);
     };
 
     timer = window.setTimeout(next, HOLD_MIN);
@@ -83,19 +99,37 @@ export const TalkingMaidSprite = memo(function TalkingMaidSprite({ active, alt =
         className={className}
         style={{ visibility: active ? "hidden" : "visible" }}
       />
-      {/* Các frame nói: chồng tuyệt đối lên ảnh gốc, chỉ frame đang chọn hiện. */}
-      {active &&
-        FRAMES.map((src, i) => (
-          <img
-            key={src}
-            src={src}
-            alt=""
-            aria-hidden
-            draggable={false}
-            className={`pointer-events-none absolute inset-0 h-full w-full ${className}`}
-            style={{ opacity: i === idx ? 1 : 0 }}
-          />
-        ))}
+      {/*
+        Các frame chồng tuyệt đối lên ảnh gốc.
+        - Khi nói: luân phiên frame miệng mở.
+        - Khi im: vẫn nạp sẵn và giữ opacity 0 => lần nói sau đổi frame
+          không phải chờ tải/giải mã ảnh (tránh nháy trắng frame đầu).
+      */}
+      {FRAMES.map((src, i) => (
+        <img
+          key={src}
+          src={src}
+          alt=""
+          aria-hidden
+          draggable={false}
+          className={`pointer-events-none absolute inset-0 h-full w-full ${className}`}
+          style={{ opacity: active && i === idx ? 1 : 0 }}
+        />
+      ))}
+      {/*
+        Biểu cảm khi im: thỉnh thoảng cô ấy mỉm cười nhẹ (frame há miệng nhẹ
+        với opacity thấp trông như đang mỉm cười). Rất nhẹ => không gây chú ý,
+        nhưng khiến nhân vật không đứng yên như tượng.
+      */}
+      {!active && (
+        <img
+          src={frame1}
+          alt=""
+          aria-hidden
+          draggable={false}
+          className={`pointer-events-none absolute inset-0 h-full w-full ${className} idle-smile`}
+        />
+      )}
     </>
   );
 });
