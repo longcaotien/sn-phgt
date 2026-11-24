@@ -1,6 +1,10 @@
 -- ============================================================================
 --  Solo Leveling Birthday — khung quản trị
---  Chạy file này trong Supabase → SQL Editor (một lần duy nhất).
+--
+--  CÁCH CHẠY: Supabase → SQL Editor → New query → dán toàn bộ file → Run.
+--  An toàn khi chạy lại nhiều lần (mọi thứ đều có IF NOT EXISTS / OR REPLACE).
+--
+--  ⚠️ TRƯỚC KHI CHẠY: sửa email quản trị ở MỤC 5.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -37,21 +41,27 @@ create table if not exists public.site_config (
 insert into public.site_config (id) values (1) on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
--- 3. Gemini API key — LƯU Ở SCHEMA RIÊNG, KHÔNG AI ĐỌC ĐƯỢC TỪ TRÌNH DUYỆT
---    (không có policy select nào => RLS chặn sạch; chỉ edge function
---    dùng service_role mới đọc được)
+-- 3. Gemini API key — KHÔNG AI ĐỌC ĐƯỢC TỪ TRÌNH DUYỆT
+--
+--    Vì sao không dùng schema riêng `private`: PostgREST (thứ phục vụ
+--    supabase-js) không cho client chọn schema khi chưa khai báo trong
+--    "Exposed schemas", nên edge function sẽ lỗi 406. Cách chắc chắn là để
+--    bảng trong `public` nhưng BẬT RLS VÀ KHÔNG TẠO POLICY NÀO.
+--    RLS bật + 0 policy = chặn tuyệt đối với anon/authenticated;
+--    service_role (edge function) vẫn bỏ qua RLS được.
 -- ---------------------------------------------------------------------------
-create schema if not exists private;
-
-create table if not exists private.secrets (
+create table if not exists public.app_secrets (
   key        text primary key,
   value      text not null,
   updated_at timestamptz not null default now(),
   updated_by uuid
 );
 
-revoke all on schema private from anon, authenticated;
-revoke all on all tables in schema private from anon, authenticated;
+alter table public.app_secrets enable row level security;
+-- Cố tình KHÔNG tạo policy nào ở đây.
+
+-- Chặn thêm một lớp ở mức quyền bảng.
+revoke all on table public.app_secrets from anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 4. Tự tạo hồ sơ khi có người đăng nhập Google lần đầu
