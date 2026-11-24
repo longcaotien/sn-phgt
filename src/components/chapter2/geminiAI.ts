@@ -175,7 +175,10 @@ async function callGeminiOnce(
       body: { model, payload: body },
     });
 
-    if (error) return { ok: false, status: 0, error: error.message };
+    if (error) {
+      const { explainFunctionError } = await import("../../lib/supabase");
+      return { ok: false, status: 0, error: explainFunctionError(error.message) };
+    }
 
     const r = data as {
       ok?: boolean;

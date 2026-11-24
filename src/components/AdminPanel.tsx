@@ -574,8 +574,21 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOi...`}
             )}
 
             {keyNote && (
-              <div className="mt-2 border border-sky-400/30 bg-sky-950/40 px-2.5 py-2 text-[11.5px] text-sky-100">
+              <div className="mt-2 break-words border border-sky-400/30 bg-sky-950/40 px-2.5 py-2 text-[11.5px] leading-relaxed text-sky-100">
                 {keyNote}
+              </div>
+            )}
+
+            {/* Lỗi hay gặp nhất là chưa deploy function — chỉ luôn cách sửa. */}
+            {keyNote && /Edge Function/i.test(keyNote) && (
+              <div className="mt-2 border border-amber-400/35 bg-amber-950/25 px-2.5 py-2 text-[11px] leading-relaxed text-amber-100/90">
+                <div className="mb-1 font-sys text-[8.5px] tracking-[0.18em] text-amber-300/80">CÁCH SỬA</div>
+                Vào Supabase → <strong>Edge Functions</strong>, kiểm tra đã có 2 function tên{" "}
+                <code className="text-amber-200">gemini</code> và{" "}
+                <code className="text-amber-200">gemini-key</code> chưa. Chưa có thì deploy bằng CLI
+                (<code className="text-amber-200">supabase functions deploy gemini-key</code>) hoặc tạo trực
+                tiếp trong dashboard → <em>Deploy a new function → Via Editor</em> rồi dán nội dung file tương
+                ứng trong thư mục <code className="text-amber-200">supabase/functions/</code>.
               </div>
             )}
           </Card>
