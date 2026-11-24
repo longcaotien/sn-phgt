@@ -31,6 +31,12 @@ export default defineConfig({
     // - Chương II & Thế giới sinh nhật tải riêng khi người chơi bước vào.
     // - File có hash nội dung => trình duyệt cache vĩnh viễn, lần sau mở gần như tức thì.
     rollupOptions: {
+      // Hai trang: web chính (index.html) và trang quản trị riêng (admin.html).
+      // Trang quản trị KHÔNG nằm trong bundle của người dùng thường.
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        admin: path.resolve(__dirname, "admin.html"),
+      },
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
@@ -39,6 +45,9 @@ export default defineConfig({
           }
           if (id.includes("react") || id.includes("scheduler")) return "vendor-react";
           if (id.includes("canvas-confetti")) return "vendor-confetti";
+          if (id.includes("@supabase") || id.includes("@aws-sdk") || id.includes("iceberg-js")) {
+            return "vendor-supabase";
+          }
           return "vendor";
         },
       },

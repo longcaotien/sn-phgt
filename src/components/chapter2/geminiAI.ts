@@ -1,6 +1,4 @@
 import type { SkillKind } from "./bossAI";
-
-const KEY_STORAGE = "sl_gemini_api_key";
 const MODEL_STORAGE = "sl_gemini_model";
 
 export const GEMINI_MODELS = [
@@ -61,29 +59,36 @@ export function setGeminiDiag(patch: Partial<GeminiDiag>) {
   window.dispatchEvent(new Event("sl-gemini-diag-changed"));
 }
 
+/**
+ * KHÔNG còn API key trong trình duyệt.
+ *
+ * Trước đây key Gemini được lưu ở localStorage nên bất kỳ ai mở DevTools cũng
+ * đọc được. Nay key nằm ở server (bảng `private.secrets` hoặc biến môi trường
+ * của edge function `gemini`), trình duyệt chỉ gửi prompt lên function đó.
+ *
+ * `hasServerKey` là kết quả đồng bộ từ server, chỉ để hiển thị trạng thái.
+ */
+let serverKeyReady = false;
+
 export function getGeminiApiKey(): string {
-  try {
-    const saved = localStorage.getItem(KEY_STORAGE)?.trim();
-    if (saved) return saved;
-  } catch {
-    // ignore storage errors
-  }
-  const envKey = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_GEMINI_API_KEY;
-  return envKey?.trim() ?? "";
+  // Giữ hàm để không phải sửa mọi nơi gọi, nhưng luôn trả rỗng:
+  // key không bao giờ được giữ ở phía client nữa.
+  return "";
 }
 
-export function setGeminiApiKey(key: string) {
-  const clean = key.trim();
-  try {
-    if (clean) localStorage.setItem(KEY_STORAGE, clean);
-    else localStorage.removeItem(KEY_STORAGE);
-  } catch {
-    // ignore storage errors
-  }
-  setGeminiDiag({
-    status: clean ? "ready" : "off",
-    lastError: null,
-  });
+export function setGeminiApiKey(_key: string) {
+  // Không còn tác dụng — việc đổi key chỉ làm được ở trang quản trị.
+  void _key;
+}
+
+export function hasGeminiApiKey(): boolean {
+  return serverKeyReady;
+}
+
+/** Đồng bộ cờ "server đã có key chưa" (gọi một lần khi khởi động). */
+export function setGeminiServerReady(ready: boolean) {
+  serverKeyReady = ready;
+  setGeminiDiag({ status: ready ? "ready" : "off", lastError: null });
 }
 
 export function getGeminiModelChoice(): GeminiModelChoice {
@@ -104,10 +109,6 @@ export function setGeminiModelChoice(m: GeminiModelChoice) {
   } catch {
     // ignore
   }
-}
-
-export function hasGeminiApiKey(): boolean {
-  return getGeminiApiKey().length > 0;
 }
 
 function clampLane(v: unknown, fallback: number): number {
@@ -153,61 +154,73 @@ function extractJson(rawText: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Gọi Gemini qua edge function `gemini` — key do server gắn vào.
+ * Trình duyệt không biết key, không thấy key trong URL/network.
+ */
 async function callGeminiOnce(
-  key: string,
   model: string,
-  body: Record<string, unknown>,
-  timeoutMs: number
+  body: Record<string, unknown>
 ): Promise<{ ok: true; text: string; latencyMs: number } | { ok: false; status: number; error: string }> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  // Nạp Supabase theo yêu cầu: gói này chỉ tải khi thật sự gọi AI.
+  const { getSupabase } = await import("../../lib/supabase");
+  const sb = await getSupabase();
+  if (!sb) {
+    return { ok: false, status: 0, error: "Chưa cấu hình backend." };
+  }
+
   const t0 = performance.now();
-
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: ctrl.signal,
-        body: JSON.stringify(body),
-      }
-    );
-    const latencyMs = Math.round(performance.now() - t0);
+    const { data, error } = await sb.functions.invoke("gemini", {
+      body: { model, payload: body },
+    });
 
-    if (!res.ok) {
-      const errData = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      const msg = errData?.error?.message || `HTTP ${res.status}`;
-      return { ok: false, status: res.status, error: msg };
+    if (error) return { ok: false, status: 0, error: error.message };
+
+    const r = data as {
+      ok?: boolean;
+      status?: number;
+      text?: string;
+      error?: string;
+      code?: string;
+      latencyMs?: number;
+    } | null;
+
+    const latencyMs = r?.latencyMs ?? Math.round(performance.now() - t0);
+
+    if (!r) return { ok: false, status: 0, error: "Phản hồi rỗng từ server." };
+    if (r.code === "NO_KEY") {
+      return { ok: false, status: 403, error: "Quản trị viên chưa cấu hình API key." };
+    }
+    if (r.error) return { ok: false, status: r.status ?? 0, error: r.error };
+    if (!r.ok) {
+      // Cố gắng đọc thông báo lỗi thật của Google từ text trả về.
+      let msg = `HTTP ${r.status ?? 0}`;
+      try {
+        const parsed = JSON.parse(r.text ?? "{}") as { error?: { message?: string } };
+        if (parsed.error?.message) msg = parsed.error.message;
+      } catch {
+        /* giữ msg mặc định */
+      }
+      return { ok: false, status: r.status ?? 0, error: msg };
     }
 
-    const data = (await res.json()) as {
+    const parsedBody = JSON.parse(r.text ?? "{}") as {
       candidates?: Array<{
         finishReason?: string;
         content?: { parts?: Array<{ text?: string }> };
       }>;
     };
-    const candidate = data.candidates?.[0];
+    const candidate = parsedBody.candidates?.[0];
     const parts = candidate?.content?.parts ?? [];
     const text = parts.map((p) => p.text ?? "").join("").trim();
     if (!text) {
-      return {
-        ok: false,
-        status: 500,
-        error: `Phản hồi rỗng (${candidate?.finishReason ?? "unknown"})`,
-      };
+      return { ok: false, status: 500, error: `Phản hồi rỗng (${candidate?.finishReason ?? "unknown"})` };
     }
     return { ok: true, text, latencyMs };
   } catch (e) {
-    const msg =
-      e instanceof Error && e.name === "AbortError"
-        ? "Hết thời gian chờ phản hồi"
-        : e instanceof Error
-        ? e.message
-        : "Lỗi mạng khi gọi Gemini";
+    const msg = e instanceof Error ? e.message : "Lỗi mạng khi gọi Gemini";
     return { ok: false, status: 0, error: msg };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -217,11 +230,13 @@ function getCandidateModels(): string[] {
   return [choice, ...GEMINI_MODELS.filter((m) => m !== choice)];
 }
 
-export async function testGeminiConnection(
-  apiKey?: string
-): Promise<{ ok: boolean; message: string; model?: string; latencyMs?: number }> {
-  const key = (apiKey ?? getGeminiApiKey()).trim();
-  if (!key) return { ok: false, message: "Chưa nhập API Key." };
+export async function testGeminiConnection(): Promise<{
+  ok: boolean;
+  message: string;
+  model?: string;
+  latencyMs?: number;
+}> {
+  if (!hasGeminiApiKey()) return { ok: false, message: "Quản trị viên chưa cấu hình API key." };
 
   const models = getCandidateModels();
   let lastErr = "Không thể kết nối.";
@@ -236,13 +251,11 @@ export async function testGeminiConnection(
     };
 
     const res = await callGeminiOnce(
-      key,
       model,
       {
         contents: [{ parts: [{ text: 'Trả về JSON: {"ok":true,"predictedNextLane":1,"laneProbs":[0.3,0.4,0.3]}' }] }],
         generationConfig: genConfig,
-      },
-      9000
+      }
     );
 
     if (res.ok) {
@@ -278,8 +291,7 @@ export async function testGeminiConnection(
 export async function analyzeWithGemini(
   payload: TelemetryPayload
 ): Promise<{ tactic: GeminiTactic | null; error?: string; rateLimited?: boolean }> {
-  const key = getGeminiApiKey();
-  if (!key) return { tactic: null, error: "Chưa có API Key" };
+  if (!hasGeminiApiKey()) return { tactic: null, error: "Chưa có API Key" };
 
   const laneText = payload.moveHistory
     .slice(-14)
@@ -313,13 +325,11 @@ Chỉ trả về JSON thuần hợp lệ đúng schema:
     };
 
     const res = await callGeminiOnce(
-      key,
       model,
       {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: genConfig,
-      },
-      12000
+      }
     );
 
     if (!res.ok) {
