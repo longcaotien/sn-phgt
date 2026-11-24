@@ -147,11 +147,33 @@ export async function currentSession(): Promise<Session | null> {
   return data.session ?? null;
 }
 
+/**
+ * Dịch lỗi thô của supabase-js thành câu dễ hiểu.
+ *
+ * "Failed to send a request to the Edge Function" là lỗi hay gặp nhất và rất
+ * khó đoán: nó xuất hiện khi function CHƯA DEPLOY (gateway trả 404 không kèm
+ * CORS header => trình duyệt coi như lỗi mạng), hoặc khi function chết lúc
+ * khởi động. Người dùng không thể tự đoán ra từ câu tiếng Anh đó.
+ */
+export function explainFunctionError(raw: string): string {
+  const m = raw.toLowerCase();
+  if (m.includes("failed to send a request")) {
+    return "Không gọi được Edge Function. Thường là do function chưa được deploy — vào Supabase → Edge Functions kiểm tra đã có function này chưa.";
+  }
+  if (m.includes("failed to fetch") || m.includes("networkerror")) {
+    return "Lỗi mạng hoặc chặn CORS khi gọi Edge Function.";
+  }
+  if (m.includes("non-2xx") || m.includes("401")) {
+    return "Edge Function từ chối: phiên đăng nhập không hợp lệ hoặc bạn không phải quản trị viên.";
+  }
+  return raw;
+}
+
 /** Gọi edge function `gemini-key` (chỉ admin dùng được). */
 export async function geminiKeyApi(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sb = await getSupabase();
   if (!sb) return { error: "Chưa cấu hình Supabase" };
   const { data, error } = await sb.functions.invoke("gemini-key", { body });
-  if (error) return { error: error.message };
+  if (error) return { error: explainFunctionError(error.message), raw: error.message };
   return (data ?? {}) as Record<string, unknown>;
 }
