@@ -297,22 +297,45 @@ dưới 12 giây để không lấn nhạc nền.
 
 ## Hoạt ảnh nói & phản ứng của hai cô hầu gái
 
-### Khẩu hình khi nói (`TalkingMouth.tsx`)
+### Hoạt ảnh nói: dùng frame ảnh thật (`TalkingMaidSprite.tsx`)
 
-Ảnh nhân vật là tranh tĩnh nên không có khẩu hình thật. Giải pháp: phủ lên
-**đúng vị trí miệng** một hình elip tối màu rồi cho co giãn theo nhịp.
+**Bản đầu tiên làm sai:** phủ một elip tối lên vị trí miệng. Nó trông giả và
+lệch khớp với nụ cười vẽ sẵn trong tranh (thành ra hai cái miệng). Đã bỏ hoàn toàn.
 
-- Toạ độ miệng đo trực tiếp từ `maid-cake.webp` (440×728): tâm miệng ở
-  **(210, 178) px** → `left: 47,7%`, `top: 24,5%`, rộng `6,4%`.
-- Nhịp môi là **tổng của 3 hàm sin lệch tần** (11,3 / 17,7 / 29,1 rad·s⁻¹) nên
-  không đều như máy, giống người nói thật.
-- Cập nhật **24 lần/giây** (không phải 60) — khẩu hình không cần mượt hơn, tiết
-  kiệm 60 % công ghi style.
-- Ghi `style.transform` trực tiếp trong `requestAnimationFrame` trên **một phần
-  tử duy nhất**, không dùng framer-motion.
-- Tôn trọng `prefers-reduced-motion`: miệng mở nhẹ và đứng yên.
-- Hai câu thoại dùng hai instance (khác độ mở): câu chào mở nhẹ (`depth 0,72`),
-  câu khen sau khi cắt bánh mở rộng hơn (`depth 0,85`).
+**Cách đúng:** tạo thêm các frame cùng bố cục, chỉ khác phần miệng, rồi luân phiên.
+
+| Frame | Nội dung | Dung lượng |
+| --- | --- | --- |
+| `maid-cake.webp` | miệng đóng, mỉm cười (ảnh gốc) | 40 KB |
+| `talk/maid-cake-1.webp` | miệng mở nhẹ (âm "a" mềm) | 32 KB |
+| `talk/maid-cake-2.webp` | miệng mở rộng (đang nói vui) | 32 KB |
+
+Cả ba đều `440×728` và **khớp pixel tuyệt đối** với ảnh gốc — đã kiểm bằng
+`compare -metric RMSE -subimage-search`: vị trí khớp là `@ 80,400` với độ lệch
+**0 px** so với vị trí chèn. Nhờ vậy khi đổi frame, trình duyệt chỉ vẽ lại vài
+pixel quanh miệng: không lệch hình, không thấy viền, không "nhảy".
+
+Kiểm tra vùng khác biệt cũng xác nhận đúng ý đồ:
+
+| Vùng | RMSE frame 1 | RMSE frame 2 |
+| --- | --- | --- |
+| **miệng** | **0,0598** | **0,0902** |
+| mắt | 0,0476 | 0,0672 |
+| bánh kem | 0,0202 | 0,0200 |
+| váy / tạp dề | 0,0202 | 0,0201 |
+| đỉnh đầu | 0,0230 | 0,0294 |
+
+Vùng miệng là nơi khác biệt **lớn nhất** (~3–4,5 lần các vùng khác) — đúng là
+chỉ miệng thay đổi.
+
+**Nhịp đổi frame:** ngẫu nhiên 95–190 ms, và **luôn chọn frame khác frame hiện
+tại** để mắt luôn thấy thay đổi. Không dùng nhịp cố định vì sẽ trông như máy.
+
+**Kỹ thuật:** một ảnh gốc giữ chỗ (quyết định kích thước khung, không bao giờ
+đổi) + các frame chồng tuyệt đối `inset-0`, chỉ frame đang chọn có `opacity: 1`.
+Không dùng `src` hoán đổi vì sẽ gây nháy trắng khi ảnh chưa giải mã xong.
+
+Tôn trọng `prefers-reduced-motion`: giữ frame há miệng nhẹ, không đổi liên tục.
 
 ### Cô đọc sách đứng dậy vỗ tay
 
@@ -328,3 +351,11 @@ nói xong thì **ngồi xuống lại**.
 - Đồng bộ qua `voice.speaking`: bật ngay khi bắt đầu nói, tắt **trễ 600 ms**
   để động tác ngồi xuống không bị cụt.
 - Hiệu ứng kèm: 3 vòng sóng toả từ bàn tay + chữ 「パチパチ ♪」 bay lên.
+
+### Thêm frame nói cho nhân vật khác
+
+1. Tạo ảnh cùng bố cục, **chỉ đổi miệng** (dùng ảnh gốc làm tham chiếu).
+2. Cắt về đúng kích thước ảnh gốc, tách nền trắng → trong suốt.
+3. Kiểm tra độ lệch: `compare -metric RMSE -subimage-search <frame> <probe> null:`
+   — toạ độ trả về phải trùng vị trí đã cắt `probe`.
+4. Thêm vào mảng `FRAMES` trong `TalkingMaidSprite.tsx`.
