@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import confetti from "canvas-confetti";
 import sceneBg from "../../assets/birthday-scene-bg.webp";
-import maidCake from "../../assets/maid-cake.webp";
 import maidBook from "../../assets/maid-book.webp";
 import maidClap from "../../assets/maid-clap.webp";
 import NatureCanvas from "./NatureCanvas";
@@ -10,7 +9,7 @@ import { CakeFireflies, GardenButterfly, GardenCat, GardenSparrow } from "./Gard
 import { CardTable, KnifeTable } from "./GardenTables";
 import { birthdayMusic } from "./birthdayMusic";
 import { maidVoice } from "./maidVoice";
-import { TalkingMouth } from "./TalkingMouth";
+import { TalkingMaidSprite } from "./TalkingMaidSprite";
 import { MEMORIES, type MemoryBubbleItem } from "./memories";
 
 type Stage = "celebrate" | "fireworks" | "ending";
@@ -724,27 +723,14 @@ export default function BirthdayWorld({
                   style={{ transformOrigin: "bottom center" }}
                   className={`will-transform relative ${cakeCut ? "" : "maid-breathe-slow"}`}
                 >
-                  <img
-                    src={maidCake}
+                  {/* Hoạt ảnh nói: luân phiên 3 frame ảnh thật (miệng đóng/mở nhẹ/
+                      mở rộng). Các frame khớp pixel tuyệt đối với ảnh gốc nên
+                      đổi frame chỉ vẽ lại vài pixel quanh miệng — không lệch,
+                      không thấy viền, không "nhảy" hình. */}
+                  <TalkingMaidSprite
+                    active={voice.speaking}
                     alt="Cô hầu gái quỳ gối nâng bánh sinh nhật"
-                    draggable={false}
                     className="h-[40vh] w-auto max-w-none select-none object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.62)] sm:h-[56vh] lg:h-[61vh]"
-                  />
-                  {/* Khẩu hình: elip tối phủ đúng vị trí miệng, mấp máy khi nói.
-                      Toạ độ đo từ chính ảnh maid-cake.webp (440×728):
-                      miệng ở ~(210, 178) => 47,7% / 24,5%. */}
-                  <TalkingMouth
-                    active={voice.speaking && voice.current === "entry"}
-                    left="47.7%"
-                    top="24.5%"
-                    width="6.4%"
-                  />
-                  <TalkingMouth
-                    active={voice.speaking && voice.current === "cake"}
-                    left="47.7%"
-                    top="24.5%"
-                    width="7.2%"
-                    depth={0.85}
                   />
                   {/* Tóc mai lay động theo gió hoàng hôn */}
                   <span
