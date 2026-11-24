@@ -21,6 +21,8 @@ type VoiceState = {
   needsGesture: boolean;
   /** người dùng đã tắt tiếng hầu gái */
   muted: boolean;
+  /** câu thoại đang phát (null khi im) — dùng để UI quyết định hoạt ảnh */
+  current: VoiceLine | null;
 };
 
 const LINES: Record<VoiceLine, string> = {
@@ -33,7 +35,7 @@ const DUCK_LEVEL = 0.15;
 
 class MaidVoicePlayer {
   private els = new Map<VoiceLine, HTMLAudioElement>();
-  private state: VoiceState = { speaking: false, needsGesture: false, muted: false };
+  private state: VoiceState = { speaking: false, needsGesture: false, muted: false, current: null };
   private listeners = new Set<(s: VoiceState) => void>();
   private ducked = false;
   /**
@@ -91,6 +93,7 @@ class MaidVoicePlayer {
     if (this.stoppingOnPurpose) return;
     if (!this.state.speaking) return;
     this.state.speaking = false;
+    this.state.current = null;
     this.unduck();
     this.emit();
   }
@@ -118,6 +121,7 @@ class MaidVoicePlayer {
   }
 
   stop() {
+    this.state.current = null;
     this.stoppingOnPurpose = true;
     this.els.forEach((el) => {
       el.pause();
@@ -154,6 +158,7 @@ class MaidVoicePlayer {
       await el.play();
       this.state.speaking = true;
       this.state.needsGesture = false;
+      this.state.current = line;
       this.duck();
       this.emit();
       return true;
@@ -161,6 +166,7 @@ class MaidVoicePlayer {
       // Bị chặn autoplay: ghi nhận để UI mời người dùng chạm.
       this.state.needsGesture = true;
       this.state.speaking = false;
+      this.state.current = null;
       this.emit();
       return false;
     }

@@ -4,11 +4,13 @@ import confetti from "canvas-confetti";
 import sceneBg from "../../assets/birthday-scene-bg.webp";
 import maidCake from "../../assets/maid-cake.webp";
 import maidBook from "../../assets/maid-book.webp";
+import maidClap from "../../assets/maid-clap.webp";
 import NatureCanvas from "./NatureCanvas";
 import { CakeFireflies, GardenButterfly, GardenCat, GardenSparrow } from "./GardenCreatures";
 import { CardTable, KnifeTable } from "./GardenTables";
 import { birthdayMusic } from "./birthdayMusic";
 import { maidVoice } from "./maidVoice";
+import { TalkingMouth } from "./TalkingMouth";
 import { MEMORIES, type MemoryBubbleItem } from "./memories";
 
 type Stage = "celebrate" | "fireworks" | "ending";
@@ -52,6 +54,12 @@ export default function BirthdayWorld({
   const [voice, setVoice] = useState(maidVoice.getState());
   /** Hiện bong bóng phụ đề tiếng Nhật khi cô ấy nói */
   const [voiceCaption, setVoiceCaption] = useState<string | null>(null);
+  /**
+   * Cô hầu gái ngồi đọc sách đứng dậy vỗ tay khi NGHE cô kia nói.
+   * Bật lên khi bắt đầu phát giọng, và tự tắt sau khi nói xong một nhịp
+   * để cô ấy kịp ngồi xuống lại.
+   */
+  const [clapping, setClapping] = useState(false);
 
   const drawingRef = useRef(false);
   const cakeBoxRef = useRef<HTMLDivElement | null>(null);
@@ -145,6 +153,19 @@ export default function BirthdayWorld({
       setMusicOn(true);
     }
   };
+
+  /**
+   * Đồng bộ hoạt ảnh vỗ tay với việc cô kia đang nói.
+   * Trễ 600 ms lúc ngồi xuống để động tác không bị "cụt".
+   */
+  useEffect(() => {
+    if (voice.speaking) {
+      setClapping(true);
+      return;
+    }
+    const t = window.setTimeout(() => setClapping(false), 600);
+    return () => window.clearTimeout(t);
+  }, [voice.speaking]);
 
   const launchCelebrationConfetti = useCallback(() => {
     const colors = ["#ffd36a", "#ff5f9f", "#7ce8ff", "#a7f3d0", "#fff6dc", "#fda4af"];
@@ -528,12 +549,72 @@ export default function BirthdayWorld({
                         lại toàn bộ ảnh 440×728 trên CPU. Thay vào đó nhịp thở
                         nằm ở lớp transform phía trên, còn ánh nắng ấm được
                         giả lập bằng một lớp overlay opacity (chỉ compositor). */}
-                    <img
-                      src={maidBook}
-                      alt="Cô hầu gái ngồi đọc sách dưới gốc cây"
-                      draggable={false}
-                      className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition duration-300 group-hover:brightness-110 sm:h-[37vh] lg:h-[42vh]"
-                    />
+                    {/* ===== Hai tư thế: ngồi đọc sách ↔ đứng vỗ tay =====
+                        Khi cô hầu gái bên kia nói, cô này đứng dậy vỗ tay
+                        (nghe thay vì đọc), nói xong lại ngồi xuống.
+                        Dùng crossfade + đổi chiều cao ảnh trong cùng một khung
+                        để chuyển cảnh mượt, không bị "nhảy" kích thước. */}
+                    <div className="relative">
+                      {/* Tư thế ngồi (mặc định) */}
+                      <motion.img
+                        src={maidBook}
+                        alt="Cô hầu gái ngồi đọc sách dưới gốc cây"
+                        draggable={false}
+                        animate={{
+                          opacity: clapping ? 0 : 1,
+                          scale: clapping ? 0.94 : 1,
+                          y: clapping ? 6 : 0,
+                        }}
+                        transition={{ duration: 0.45, ease: "easeInOut" }}
+                        className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition duration-300 group-hover:brightness-110 sm:h-[37vh] lg:h-[42vh]"
+                      />
+                      {/* Tư thế đứng vỗ tay — chồng lên, ảnh cao hơn nên neo đáy */}
+                      <motion.img
+                        src={maidClap}
+                        alt="Cô hầu gái đứng vỗ tay reo mừng"
+                        draggable={false}
+                        initial={false}
+                        animate={{
+                          opacity: clapping ? 1 : 0,
+                          scale: clapping ? 1 : 0.94,
+                          y: clapping ? 0 : 6,
+                        }}
+                        transition={{ duration: 0.45, ease: "easeInOut" }}
+                        className="pointer-events-none absolute bottom-0 left-1/2 h-[30vh] w-auto max-w-none -translate-x-1/2 select-none object-contain drop-shadow-[0_16px_30px_rgba(0,0,0,0.6)] sm:h-[52vh] lg:h-[58vh]"
+                      />
+                      {/* Sóng "vỗ tay" toả ra từ hai bàn tay khi đang vỗ */}
+                      <AnimatePresence>
+                        {clapping && (
+                          <>
+                            {[0, 1, 2].map((i) => (
+                              <motion.span
+                                key={i}
+                                initial={{ opacity: 0, scale: 0.6 }}
+                                animate={{ opacity: [0.7, 0], scale: [0.6, 1.5] }}
+                                exit={{ opacity: 0 }}
+                                transition={{
+                                  duration: 1.2,
+                                  repeat: Infinity,
+                                  delay: i * 0.4,
+                                  ease: "easeOut",
+                                }}
+                                className="pointer-events-none absolute bottom-[64%] left-1/2 h-6 w-6 -translate-x-1/2 rounded-full border border-amber-200/80"
+                              />
+                            ))}
+                            {/* Chữ "パチパチ" (vỗ tay) nhỏ bay lên */}
+                            <motion.span
+                              initial={{ opacity: 0, y: 4 }}
+                              animate={{ opacity: [0, 1, 0], y: [4, -18, -26] }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 2.4, repeat: Infinity, ease: "easeOut" }}
+                              className="pointer-events-none absolute bottom-[70%] left-[62%] whitespace-nowrap text-[10px] font-bold text-amber-100 drop-shadow-[0_0_8px_rgba(253,224,71,0.9)] sm:text-xs"
+                            >
+                              パチパチ ♪
+                            </motion.span>
+                          </>
+                        )}
+                      </AnimatePresence>
+                    </div>
                     {/* Ánh nắng ấm lay động — chỉ đổi opacity nên miễn phí cho GPU */}
                     <motion.span
                       aria-hidden
@@ -648,6 +729,22 @@ export default function BirthdayWorld({
                     alt="Cô hầu gái quỳ gối nâng bánh sinh nhật"
                     draggable={false}
                     className="h-[40vh] w-auto max-w-none select-none object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.62)] sm:h-[56vh] lg:h-[61vh]"
+                  />
+                  {/* Khẩu hình: elip tối phủ đúng vị trí miệng, mấp máy khi nói.
+                      Toạ độ đo từ chính ảnh maid-cake.webp (440×728):
+                      miệng ở ~(210, 178) => 47,7% / 24,5%. */}
+                  <TalkingMouth
+                    active={voice.speaking && voice.current === "entry"}
+                    left="47.7%"
+                    top="24.5%"
+                    width="6.4%"
+                  />
+                  <TalkingMouth
+                    active={voice.speaking && voice.current === "cake"}
+                    left="47.7%"
+                    top="24.5%"
+                    width="7.2%"
+                    depth={0.85}
                   />
                   {/* Tóc mai lay động theo gió hoàng hôn */}
                   <span
