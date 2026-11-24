@@ -249,3 +249,48 @@ Ba trường hợp đắt nhất đã được thay bằng lớp overlay chỉ �
 - `.contain-paint` cho các quầng sáng blur lớn: cô lập vùng repaint.
 - `.will-transform` chỉ đặt cho 2 nhân vật thật sự animate (lạm dụng
   `will-change` sẽ tốn VRAM và phản tác dụng).
+
+## Giọng nói cô hầu gái (tiếng Nhật)
+
+Khi bước vào khu vườn, cô hầu gái chúc mừng sinh nhật bằng tiếng Nhật — giọng
+anime nữ, dễ thương (đã tạo sẵn, không gọi API lúc chạy).
+
+| File | Nội dung | Dùng khi |
+| --- | --- | --- |
+| `src/assets/voice/maid-entry.mp3` | 「ご主人様、お誕生日おめでとうございます！…」 | Vừa bước vào vườn (~0,9 s sau khi cảnh hiện) |
+| `src/assets/voice/maid-cake.mp3` | 「わぁ、上手に切れましたね！さすがご主人様です。はい、あーん。」 | Cắt bánh xong |
+
+Tổng dung lượng 204 KB, chỉ tải khi vào khu vườn (chunk `BirthdayWorld`).
+
+### Kiến trúc (`maidVoice.ts`)
+
+- **Preload** cả 2 file để câu đầu tiên phát ngay, không trễ.
+- **Ducking**: khi cô ấy nói, nhạc nền tự hạ xuống 15 % rồi trả lại đủ khi nói
+  xong. Nhạc nền có một `masterGain` duy nhất nên chỉ cần đổi 1 giá trị thay vì
+  sửa từng nốt đang ngân.
+- **Autoplay bị chặn** được xử lý như trạng thái bình thường: `needsGesture`
+  bật lên và một nút “🔈 Chạm để nghe hầu gái chúc mừng” hiện ra. Trình duyệt chỉ
+  cho phát audio sau thao tác của người dùng — không thể lách.
+- **Không chồng tiếng**: câu mới tự cắt câu cũ. Có cờ `stoppingOnPurpose` để
+  việc chủ động `pause()` không bị hiểu nhầm là “nói xong” (nếu thiếu cờ này,
+  âm lượng nhạc sẽ nhấp nháy 0,15 → 1 → 0,15 mỗi lần chuyển câu).
+- **Nút bật/tắt** giọng ở header (cạnh nút nhạc), có chấm hồng nhấp nháy khi
+  đang nói. Trạng thái tắt tiếng được giữ trong bộ nhớ của phiên.
+
+### Bong bóng phụ đề
+
+Khi cô ấy nói, một bong bóng thoại hiện phía trên nhân vật: câu tiếng Nhật
+(phụ đề gốc) + dòng tiếng Việt nhỏ bên dưới, kèm 3 thanh sóng âm nhấp nháy
+(CSS `.voice-wave`, tự tắt ở mức `q-min`).
+
+### Đổi giọng / thêm câu thoại
+
+Sinh file mới rồi thêm vào `LINES` trong `maidVoice.ts`:
+
+```ts
+import newSrc from "../../assets/voice/maid-new.mp3";
+const LINES = { entry: entrySrc, cake: cakeSrc, newLine: newSrc };
+```
+
+Sau đó gọi `maidVoice.say("newLine")`. Giữ âm lượng đỉnh khoảng −3 dB và độ dài
+dưới 12 giây để không lấn nhạc nền.

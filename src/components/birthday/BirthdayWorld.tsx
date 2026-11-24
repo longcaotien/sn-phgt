@@ -8,6 +8,7 @@ import NatureCanvas from "./NatureCanvas";
 import { CakeFireflies, GardenButterfly, GardenCat, GardenSparrow } from "./GardenCreatures";
 import { CardTable, KnifeTable } from "./GardenTables";
 import { birthdayMusic } from "./birthdayMusic";
+import { maidVoice } from "./maidVoice";
 import { MEMORIES, type MemoryBubbleItem } from "./memories";
 
 type Stage = "celebrate" | "fireworks" | "ending";
@@ -47,6 +48,10 @@ export default function BirthdayWorld({
   const [dentedId, setDentedId] = useState<number | null>(null);
   const [zoomMemory, setZoomMemory] = useState<MemoryBubbleItem | null>(null);
   const [catLookUp, setCatLookUp] = useState(false);
+  /** Trạng thái giọng hầu gái (đang nói / bị chặn / đã tắt tiếng) */
+  const [voice, setVoice] = useState(maidVoice.getState());
+  /** Hiện bong bóng phụ đề tiếng Nhật khi cô ấy nói */
+  const [voiceCaption, setVoiceCaption] = useState<string | null>(null);
 
   const drawingRef = useRef(false);
   const cakeBoxRef = useRef<HTMLDivElement | null>(null);
@@ -93,11 +98,41 @@ export default function BirthdayWorld({
     fwTimersRef.current = [];
   };
 
+  // Nối giọng hầu gái với nhạc nền để tự hạ nhạc khi cô ấy nói (ducking)
+  useEffect(() => {
+    maidVoice.bindMusic((scale) => birthdayMusic.setVolumeScale(scale));
+    maidVoice.preload();
+    return maidVoice.subscribe(setVoice);
+  }, []);
+
   useEffect(() => {
     birthdayMusic.start().catch(() => {});
     return () => {
       clearFwTimers();
       birthdayMusic.stop();
+      maidVoice.stop();
+    };
+  }, []);
+
+  /**
+   * Câu chào khi bước vào vườn.
+   * Trình duyệt chặn autoplay nếu chưa có thao tác của người dùng — nhưng vì
+   * người chơi phải bấm nút để vào khu vườn, ta vẫn thử phát; nếu bị chặn thì
+   * `voice.needsGesture` bật lên và một nút "chạm để nghe" hiện ra.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const greet = async () => {
+      const ok = await maidVoice.say("entry");
+      if (cancelled || !ok) return;
+      setVoiceCaption("お誕生日おめでとうございます、ご主人様！");
+      fwTimersRef.current.push(window.setTimeout(() => setVoiceCaption(null), 5200));
+    };
+    // Đợi cảnh hiện ra một nhịp rồi mới nói (đỡ "cụt" khi vừa chuyển cảnh).
+    const t = window.setTimeout(greet, 900);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
     };
   }, []);
 
@@ -304,13 +339,31 @@ export default function BirthdayWorld({
           <span>KHU VƯỜN SINH NHẬT · 30/11</span>
         </div>
 
-        <button
-          onClick={toggleMusic}
-          aria-label={musicOn ? "Tắt nhạc" : "Bật nhạc"}
-          className="glass-warm flex h-10 w-10 items-center justify-center rounded-full text-lg text-amber-200 transition hover:scale-105 hover:bg-black/55 hover:text-amber-100"
-        >
-          {musicOn ? "♪" : "✕"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Bật/tắt giọng cô hầu gái (tiếng Nhật) */}
+          <button
+            onClick={() => maidVoice.toggleMuted()}
+            aria-label={voice.muted ? "Bật giọng hầu gái" : "Tắt giọng hầu gái"}
+            title={voice.muted ? "Bật giọng hầu gái" : "Tắt giọng hầu gái"}
+            className={`glass-warm relative flex h-10 w-10 items-center justify-center rounded-full text-base transition hover:scale-105 hover:bg-black/55 ${
+              voice.muted ? "text-amber-200/45" : "text-rose-200"
+            }`}
+          >
+            {voice.muted ? "🔇" : "🗣"}
+            {/* Chấm nhấp nháy khi cô ấy đang nói */}
+            {voice.speaking && (
+              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-rose-400 shadow-[0_0_8px_#fb7185]" />
+            )}
+          </button>
+
+          <button
+            onClick={toggleMusic}
+            aria-label={musicOn ? "Tắt nhạc" : "Bật nhạc"}
+            className="glass-warm flex h-10 w-10 items-center justify-center rounded-full text-lg text-amber-200 transition hover:scale-105 hover:bg-black/55 hover:text-amber-100"
+          >
+            {musicOn ? "♪" : "✕"}
+          </button>
+        </div>
       </div>
 
       {/* ============================================================
@@ -521,6 +574,61 @@ export default function BirthdayWorld({
 
                 {/* Hào quang hoàng hôn ấm áp phía sau nhân vật */}
                 <div className="contain-paint pointer-events-none absolute inset-0 -z-10 rounded-full bg-[radial-gradient(ellipse_at_50%_58%,rgba(255,206,130,0.26),transparent_68%)] blur-xl" />
+
+                {/* ===== Bong bóng thoại tiếng Nhật khi cô ấy nói ===== */}
+                <AnimatePresence>
+                  {voiceCaption && !voice.muted && (
+                    <motion.div
+                      key={voiceCaption}
+                      initial={{ opacity: 0, y: 10, scale: 0.92 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.96 }}
+                      transition={{ type: "spring", stiffness: 220, damping: 22 }}
+                      className="pointer-events-none absolute bottom-[calc(100%-2%)] left-1/2 z-40 w-[min(78vw,300px)] -translate-x-1/2"
+                    >
+                      <div className="relative rounded-2xl border border-rose-200/55 bg-gradient-to-b from-[#fffaf4]/96 to-[#ffeef0]/94 px-3.5 py-2.5 text-center shadow-[0_10px_32px_rgba(0,0,0,0.4)] backdrop-blur-sm">
+                        <div className="mb-1 flex items-center justify-center gap-1.5">
+                          <span className="flex items-end gap-0.5" aria-hidden>
+                            {[0, 1, 2].map((i) => (
+                              <span
+                                key={i}
+                                className="voice-wave w-[2px] rounded-full bg-rose-400"
+                                style={{ height: 6, animationDelay: `${i * 0.15}s` }}
+                              />
+                            ))}
+                          </span>
+                          <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-rose-500/85">
+                            Hầu gái nói
+                          </span>
+                        </div>
+                        <p className="text-[13px] font-semibold leading-snug text-stone-800">{voiceCaption}</p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-stone-500">
+                          {voiceCaption.startsWith("わぁ")
+                            ? "“A, cắt giỏi quá! Đúng là chủ nhân của em.”"
+                            : "“Chúc mừng sinh nhật, thưa chủ nhân!”"}
+                        </p>
+                        <span className="absolute -bottom-[7px] left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-b border-r border-rose-200/55 bg-[#ffeef0]" />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Nút mời chạm khi trình duyệt chặn tự phát giọng */}
+                <AnimatePresence>
+                  {voice.needsGesture && !voice.muted && (
+                    <motion.button
+                      key="voice-unlock"
+                      type="button"
+                      onClick={() => maidVoice.say(stage === "fireworks" ? "cake" : "entry")}
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      className="absolute -top-11 left-1/2 z-40 -translate-x-1/2 whitespace-nowrap rounded-full border border-rose-200/70 bg-rose-50/95 px-3.5 py-1.5 text-[11px] font-bold text-rose-700 shadow-[0_6px_20px_rgba(0,0,0,0.3)] transition hover:scale-105"
+                    >
+                      🔈 Chạm để nghe hầu gái chúc mừng
+                    </motion.button>
+                  )}
+                </AnimatePresence>
 
                 <motion.div
                   animate={

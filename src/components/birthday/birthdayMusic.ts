@@ -5,11 +5,18 @@
  */
 class BirthdayMusicPlayer {
   private ctx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private timer: number | null = null;
   private audioEl: HTMLAudioElement | null = null;
   private useFile = false;
   private playing = false;
   private step = 0;
+  /**
+   * Hệ số âm lượng (1 = bình thường, 0.15 = đang "duck" để nhường chỗ cho
+   * giọng hầu gái). Mọi chỗ đặt âm lượng đều nhân với hệ số này.
+   */
+  private volumeScale = 1;
+  private static readonly BASE_VOLUME = 0.52;
 
   // Happy Birthday (F major, chậm rãi 74 BPM, cảm giác hộp nhạc chill)
   private readonly melody: Array<{ f: number; beats: number; bass?: number }> = [
@@ -46,7 +53,14 @@ class BirthdayMusicPlayer {
   private ensureContext() {
     if (!this.ctx) {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (AC) this.ctx = new AC();
+      if (AC) {
+        this.ctx = new AC();
+        // Một gain "master" duy nhất cho mọi nốt => ducking chỉ cần đổi 1 giá trị
+        // thay vì phải sửa từng nốt đang phát.
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = this.volumeScale;
+        this.masterGain.connect(this.ctx.destination);
+      }
     }
     if (this.ctx && this.ctx.state === "suspended") {
       this.ctx.resume().catch(() => {});
@@ -77,7 +91,8 @@ class BirthdayMusicPlayer {
     osc.connect(gain);
     osc2.connect(g2);
     g2.connect(gain);
-    gain.connect(this.ctx.destination);
+    // Nối qua master gain để ducking áp dụng cho mọi nốt đang ngân.
+    gain.connect(this.masterGain ?? this.ctx.destination);
 
     osc.start(now);
     osc2.start(now);
@@ -100,6 +115,18 @@ class BirthdayMusicPlayer {
     this.timer = window.setTimeout(this.scheduleNext, durMs);
   };
 
+  /** Hạ/nâng âm lượng nhạc nền (dùng khi hầu gái nói). */
+  setVolumeScale(scale: number) {
+    this.volumeScale = Math.max(0, Math.min(1, scale));
+    if (this.audioEl) {
+      this.audioEl.volume = BirthdayMusicPlayer.BASE_VOLUME * this.volumeScale;
+    }
+    // Nhạc WebAudio (khi không có file mp3): chỉnh master gain nếu đang có.
+    if (this.masterGain) {
+      this.masterGain.gain.value = this.volumeScale;
+    }
+  }
+
   async start() {
     if (this.playing) return;
     this.playing = true;
@@ -109,7 +136,7 @@ class BirthdayMusicPlayer {
       const base = import.meta.env.BASE_URL ?? "/";
       const audio = new Audio(`${base}music/birthday.mp3`);
       audio.loop = true;
-      audio.volume = 0.52;
+      audio.volume = BirthdayMusicPlayer.BASE_VOLUME * this.volumeScale;
       this.audioEl = audio;
       try {
         await audio.play();

@@ -775,3 +775,14 @@ html.q-min .spark-rise {
 }
 .flame-flick { animation: flameFlick ease-in-out infinite; will-change: transform, opacity; }
 html.q-min .flame-flick { animation: none !important; }
+
+/* Sóng âm nhỏ trong bong bóng thoại của hầu gái */
+@keyframes voiceWave {
+  0%, 100% { transform: scaleY(0.45); opacity: 0.6; }
+  50%      { transform: scaleY(1.6);  opacity: 1; }
+}
+.voice-wave {
+  transform-origin: bottom;
+  animation: voiceWave 0.7s ease-in-out infinite;
+}
+html.q-min .voice-wave { animation: none !important; }
