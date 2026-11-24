@@ -415,6 +415,7 @@ export default function BirthdayWorld({
               />
               {/* Mèo trắng nép giữa 2 bàn, ngước nhìn bướm */}
               <GardenCat
+                black={false}
                 left="39%"
                 bottom="2.5%"
                 height="clamp(42px, 6vh, 80px)"
