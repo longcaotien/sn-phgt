@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import tableCardImg from "../../assets/table-card.webp";
 import tableKnifeImg from "../../assets/table-knife.webp";
 
@@ -64,25 +63,13 @@ export function CardTable({
         {/* Ánh sáng dịu nhấp nháy trên phong bì thư khi chưa đọc */}
         {!letterRead && (
           <>
-            <motion.span
-              animate={{ opacity: [0.28, 0.85, 0.28], scale: [0.9, 1.18, 0.9] }}
-              transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-              className="pointer-events-none absolute left-[41%] top-[43%] h-8 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-300/45 blur-md"
-            />
-            {/* Vòng sáng lan toả mời gọi (vẽ bằng transform, không tốn filter) */}
-            <motion.span
-              animate={{ scale: [0.7, 1.5], opacity: [0.5, 0] }}
-              transition={{ duration: 2.6, repeat: Infinity, ease: "easeOut" }}
-              className="pointer-events-none absolute left-[41%] top-[43%] h-10 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-200/70"
-            />
+            <span className="envelope-glow pointer-events-none absolute left-[41%] top-[43%] h-8 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-300/45 blur-md" />
+            {/* Vòng sáng lan toả mời gọi — CSS (compositor), không tốn JS */}
+            <span className="invite-ring pointer-events-none absolute left-[41%] top-[43%] h-10 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-200/70" />
             {/* Icon niêm phong sáp nhấp nháy */}
-            <motion.span
-              animate={{ y: [0, -3, 0], opacity: [0.75, 1, 0.75] }}
-              transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-              className="pointer-events-none absolute left-[41%] top-[36%] -translate-x-1/2 text-[10px] text-amber-100 drop-shadow-[0_0_8px_rgba(253,224,71,0.9)] sm:text-xs"
-            >
+            <span className="glint-bob pointer-events-none absolute left-[41%] top-[36%] -translate-x-1/2 text-[10px] text-amber-100 drop-shadow-[0_0_8px_rgba(253,224,71,0.9)] sm:text-xs">
               ✦
-            </motion.span>
+            </span>
           </>
         )}
 
@@ -137,36 +124,22 @@ export function KnifeTable({
         {/* Tia sáng lấp lánh trên lưỡi dao bạc */}
         {!cakeCut && (
           <>
-            <motion.span
-              animate={{ opacity: [0.15, 0.95, 0.15], scale: [0.7, 1.3, 0.7] }}
-              transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-              className="pointer-events-none absolute left-[46%] top-[28%] h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-100/80 blur-[3px]"
-            />
+            <span className="blade-glint pointer-events-none absolute left-[46%] top-[28%] h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-100/80 blur-[3px]" />
             {/* ánh kim chạy dọc lưỡi dao */}
-            <motion.span
-              animate={{ x: ["-30%", "130%"], opacity: [0, 0.85, 0] }}
-              transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.1 }}
-              className="pointer-events-none absolute left-0 top-[30%] h-[3px] w-8 rounded-full bg-gradient-to-r from-transparent via-white to-transparent"
-            />
+            <span className="blade-sweep pointer-events-none absolute left-0 top-[30%] h-[3px] w-8 rounded-full bg-gradient-to-r from-transparent via-white to-transparent" />
           </>
         )}
 
         {/* Vầng hào quang phép thuật khi đã cầm dao lên */}
         {knifeHeld && !cakeCut && (
           <>
-            <motion.span
-              animate={{ opacity: [0.35, 0.8, 0.35], scale: [1, 1.08, 1] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              className="pointer-events-none absolute left-1/2 top-[30%] h-14 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-300/35 blur-md"
-            />
+            <span className="knife-aura pointer-events-none absolute left-1/2 top-[30%] h-14 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-300/35 blur-md" />
             {/* tia lửa nhỏ bay lên */}
             {[0, 1, 2].map((i) => (
-              <motion.span
+              <span
                 key={i}
-                animate={{ y: [0, -22], opacity: [0.9, 0], scale: [1, 0.4] }}
-                transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.45, ease: "easeOut" }}
-                className="pointer-events-none absolute h-1 w-1 rounded-full bg-amber-100 shadow-[0_0_8px_2px_rgba(253,224,71,0.9)]"
-                style={{ left: `${38 + i * 12}%`, top: "26%" }}
+                className="spark-rise pointer-events-none absolute h-1 w-1 rounded-full bg-amber-100 shadow-[0_0_8px_2px_rgba(253,224,71,0.9)]"
+                style={{ left: `${38 + i * 12}%`, top: "26%", animationDelay: `${i * 0.45}s` }}
               />
             ))}
           </>

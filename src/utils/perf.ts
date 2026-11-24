@@ -113,3 +113,162 @@ export function createFrameLoop(task: FrameTask): () => void {
     stopIfIdle();
   };
 }
+
+
+/* ------------------------------------------------------------------ */
+/*  Bộ điều tiết chất lượng thích ứng (adaptive quality governor)      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Vì sao cần: `lowEnd` chỉ đo MỘT LẦN lúc tải trang bằng hardwareConcurrency
+ * và deviceMemory. Nhưng máy có thể yếu vì lý do khác (GPU tích hợp yếu, đang
+ * chạy tác vụ nặng, màn hình 4K, pin yếu → CPU bị hạ xung). Khi đó site vẫn
+ * tưởng là máy khoẻ và chạy hiệu ứng nặng => lag.
+ *
+ * Bộ điều tiết này đo thời gian khung hình thật rồi tự hạ cấp dần:
+ *   2 = đầy đủ   → mọi hiệu ứng
+ *   1 = vừa      → giảm hạt, bỏ blur trang trí, canvas 45fps
+ *   0 = tối thiểu → tắt hiệu ứng trang trí, canvas 30fps, ít hạt nhất
+ *
+ * Chỉ hạ, không tự nâng lại (tránh nhấp nháy lên xuống gây giật).
+ */
+export type Quality = 0 | 1 | 2;
+
+let quality: Quality = reduceMotion ? 0 : lowEnd ? 1 : 2;
+
+const qualityListeners = new Set<(q: Quality) => void>();
+
+export function getQuality(): Quality {
+  return quality;
+}
+
+/** Đăng ký nhận thông báo khi mức chất lượng bị hạ. Trả về hàm huỷ. */
+export function onQualityChange(cb: (q: Quality) => void): () => void {
+  qualityListeners.add(cb);
+  return () => qualityListeners.delete(cb);
+}
+
+/** Hệ số mật độ hạt theo mức chất lượng hiện tại. */
+export function qualityScale(): number {
+  return quality === 2 ? 1 : quality === 1 ? 0.55 : 0.3;
+}
+
+/** Số khung hình mỗi giây mục tiêu cho canvas nền. */
+export function targetFps(): number {
+  return quality === 2 ? 45 : quality === 1 ? 30 : 24;
+}
+
+/* --- Đo khung hình: dùng chung một nguồn, không tạo timer riêng --- */
+
+let probeFrames = 0;
+let probeTime = 0;
+/**
+ * Mốc thời gian trước đó thì không đo: lúc mới tải còn giật do parse JS /
+ * giải mã ảnh, và sau mỗi lần hạ cấp cần chờ hiệu ứng mới phát huy tác dụng.
+ * Dùng mốc thời gian tuyệt đối (ms) thay vì đếm frame để đúng trên mọi FPS.
+ */
+let warmupUntil = 0;
+let started = false;
+let probePaused = false;
+/**
+ * Cửa sổ trượt ghi FPS của ~4 giây gần nhất (mỗi phần tử là một cửa sổ 1,6 s).
+ * Dùng nhiều mẫu thay vì một mẫu đơn để không hạ cấp oan khi FPS chỉ dao động
+ * xen kẽ (rất hay gặp: 1 giây giật do GC, 1 giây mượt).
+ */
+const fpsWindow: number[] = [];
+const FPS_WINDOW_SIZE = 3;
+
+/**
+ * Cho canvas gọi mỗi frame để báo "tôi vừa vẽ xong một khung".
+ *
+ * Chính sách hạ cấp (cố tình "kiên nhẫn" để không hạ oan):
+ *  - Cần **2 cửa sổ đo liên tiếp** (~3,2 giây) đều dưới 40fps mới hạ 1 bậc.
+ *  - Sau khi hạ, bỏ qua ~1,5 giây để hiệu ứng mới kịp phát huy tác dụng
+ *    rồi mới đo lại — tránh việc hạ liên tiếp 2 bậc chỉ vì hiệu ứng cũ
+ *    chưa kịp tắt.
+ *  - Chỉ hạ, không tự nâng lại (nâng lại dễ gây nhấp nháy lên xuống).
+ */
+export function reportFrame(now: number) {
+  if (probePaused) return;
+  if (!started) {
+    started = true;
+    // Chờ 1,8 giây đầu cho trang ổn định rồi mới bắt đầu đo.
+    warmupUntil = now + 1800;
+    probeTime = now;
+    return;
+  }
+  if (now < warmupUntil) {
+    probeTime = now;
+    probeFrames = 0;
+    return;
+  }
+  probeFrames++;
+  const elapsed = now - probeTime;
+  // Đo trong cửa sổ ~1,6 giây
+  if (elapsed < 1600) return;
+
+  const fps = (probeFrames * 1000) / elapsed;
+  probeFrames = 0;
+  probeTime = now;
+
+  // Ghi vào cửa sổ trượt
+  fpsWindow.push(fps);
+  if (fpsWindow.length > FPS_WINDOW_SIZE) fpsWindow.shift();
+
+  // Chỉ quyết định khi đã có đủ mẫu
+  if (fpsWindow.length < FPS_WINDOW_SIZE || quality === 0) return;
+
+  const avg = fpsWindow.reduce((a, b) => a + b, 0) / fpsWindow.length;
+
+  // Hạ xuống mức 1 (vừa): đủ khi mọi mẫu đều dưới 40fps, hoặc trung bình < 34.
+  // Hạ xuống mức 0 (tối thiểu): phải TỆ HẲN (trung bình < 26) — vì mức này
+  // tắt gần hết hiệu ứng trang trí, không nên áp cho máy chỉ hơi yếu.
+  const allBad = fpsWindow.every((f) => f < 40);
+  const clearlyBad = avg < 34;
+  const reallyBad = avg < 26;
+
+  const shouldDrop = quality === 2 ? allBad || clearlyBad : reallyBad;
+  if (!shouldDrop) return;
+
+  // Hạ đúng 1 bậc, rồi tạm nghỉ đo để hiệu ứng mới kịp có tác dụng.
+  quality = (quality - 1) as Quality;
+  fpsWindow.length = 0;
+  // Nghỉ đo 2,5 GIÂY (mốc thời gian tuyệt đối, không đếm frame).
+  // Đếm frame sẽ sai trên máy yếu: 90 frame ở 20fps chỉ là 4,5 giây nhưng
+  // ở 60fps lại là 1,5 giây — trong khi ta cần một khoảng thời gian cố định.
+  warmupUntil = now + 2500;
+  qualityListeners.forEach((cb) => {
+    try {
+      cb(quality);
+    } catch {
+      /* listener lỗi không được làm chết vòng lặp */
+    }
+  });
+}
+
+/**
+ * Tạm dừng đo (dùng khi chuyển cảnh / mở modal nặng) để không hạ cấp oan.
+ */
+export function pauseFrameProbe(ms = 1500) {
+  probePaused = true;
+  probeFrames = 0;
+  if (typeof window !== "undefined") {
+    window.setTimeout(() => {
+      probePaused = false;
+      probeTime = performance.now();
+    }, ms);
+  }
+}
+
+/**
+ * Có nên chạy hiệu ứng trang trí nặng (blur lớn, hạt bay, filter) không.
+ * Tôn trọng cả `prefers-reduced-motion`.
+ */
+export function richMotion(): boolean {
+  return !reduceMotion && quality >= 2;
+}
+
+/** Có nên chạy hiệu ứng ở mức trung bình (hạt bay nhẹ, đom đóm...). */
+export function someMotion(): boolean {
+  return !reduceMotion && quality >= 1;
+}

@@ -1,5 +1,12 @@
 import { useEffect, useRef } from "react";
-import { createFrameLoop, getMaxDpr, particleScale } from "../../utils/perf";
+import {
+  createFrameLoop,
+  getMaxDpr,
+  particleScale,
+  qualityScale,
+  reportFrame,
+  targetFps,
+} from "../../utils/perf";
 
 type LayerMode = "back" | "front";
 
@@ -104,7 +111,7 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
     }[] = [];
 
     /** Hệ số mật độ hạt theo cấu hình máy */
-    const density = particleScale;
+    const density = particleScale * qualityScale();
 
     // ---------- Sprite nướng sẵn ----------
     const makeDot = (rgb: string, softness = 0.35) => {
@@ -141,6 +148,33 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       return c;
     };
     const glintSprite = makeGlintSprite();
+
+    /** Sprite tia sáng dọc: gradient dựng 1 lần, sau đó chỉ drawImage. */
+    const raySprite = (() => {
+      const cw = 64;
+      const ch = 256;
+      const c = document.createElement("canvas");
+      c.width = cw;
+      c.height = ch;
+      const g = c.getContext("2d");
+      if (!g) return c;
+      // Dọc: sáng ở đỉnh, mờ dần xuống đáy
+      const gv = g.createLinearGradient(0, 0, 0, ch);
+      gv.addColorStop(0, "rgba(255, 240, 190, 0.9)");
+      gv.addColorStop(0.55, "rgba(255, 226, 160, 0.4)");
+      gv.addColorStop(1, "rgba(255, 210, 130, 0)");
+      g.fillStyle = gv;
+      g.fillRect(0, 0, cw, ch);
+      // Ngang: mờ hai mép để không lộ cạnh cứng
+      g.globalCompositeOperation = "destination-in";
+      const gh = g.createLinearGradient(0, 0, cw, 0);
+      gh.addColorStop(0, "rgba(0,0,0,0)");
+      gh.addColorStop(0.5, "rgba(0,0,0,1)");
+      gh.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = gh;
+      g.fillRect(0, 0, cw, ch);
+      return c;
+    })();
 
     /** Lớp tĩnh: tia nắng + sương nắng (vẽ 1 lần mỗi khi resize) */
     let staticBack: HTMLCanvasElement | null = null;
@@ -351,25 +385,24 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
 
-      // 2b. Tia sáng thần tiên (god rays) — rẻ: chỉ 6 dải gradient mờ
+      // 2b. Tia sáng thần tiên (god rays).
+      // Dùng sprite dựng sẵn thay vì `createLinearGradient` mỗi khung hình:
+      // tạo gradient trong vòng lặp vẽ buộc trình duyệt cấp phát + rasterize
+      // lại mỗi frame, rất tốn trên GPU tích hợp.
       ctx.globalCompositeOperation = "lighter";
       for (const r of godRays) {
         const sway = Math.sin(t * 0.28 + r.ph) * 0.012;
         const x0 = (r.xRatio + sway) * w;
         const alpha = r.a * (0.65 + 0.35 * Math.sin(t * 0.5 + r.ph));
-        const gx = ctx.createLinearGradient(x0, 0, x0 - h * 0.32, h);
-        gx.addColorStop(0, `rgba(255, 240, 190, ${alpha})`);
-        gx.addColorStop(0.55, `rgba(255, 226, 160, ${alpha * 0.45})`);
-        gx.addColorStop(1, "rgba(255, 210, 130, 0)");
-        ctx.fillStyle = gx;
-        ctx.beginPath();
-        ctx.moveTo(x0 - r.w * w, 0);
-        ctx.lineTo(x0 + r.w * w, 0);
-        ctx.lineTo(x0 + r.w * w - h * 0.3, h);
-        ctx.lineTo(x0 - r.w * w - h * 0.3, h);
-        ctx.closePath();
-        ctx.fill();
+        const rayW = r.w * w * 2.4;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, alpha * 6);
+        ctx.translate(x0 - h * 0.15, 0);
+        ctx.rotate(-0.3);
+        ctx.drawImage(raySprite, -rayW / 2, 0, rayW, h * 1.1);
+        ctx.restore();
       }
+      ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = "source-over";
 
       // 3. Đàn chim bay chầm chậm phía chân trời
@@ -583,17 +616,18 @@ export default function NatureCanvas({ layer = "back" }: { layer?: LayerMode }) 
       }
     };
 
-    // Lớp nền chạy 45fps (đủ mượt cho hiệu ứng nền, tiết kiệm ~25% GPU),
+    // Lớp nền chạy ở FPS thích ứng (45 → 30 → 24 khi máy yếu dần),
     // lớp tiền cảnh chạy 60fps.
-    const interval = layer === "back" ? 1 / 45 : 0;
     let acc = 0;
 
     const draw = (now: number, dt: number) => {
-      if (interval > 0) {
+      if (layer === "back") {
+        const interval = 1 / targetFps();
         acc += dt;
         if (acc < interval) return;
         acc = 0;
       }
+      reportFrame(now);
       const t = (now - startTime) * 0.001;
       ctx.clearRect(0, 0, w, h);
       if (layer === "back") drawBack(t);

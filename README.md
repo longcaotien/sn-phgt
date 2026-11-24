@@ -164,3 +164,88 @@ convert anh.jpg -resize 1400x -strip -quality 72 anh.webp
 Đặt ảnh WebP nền trong suốt vào `src/assets/`, rồi dùng lại `GardenCat` / `GardenButterfly` /
 `GardenSparrow` với toạ độ `left`/`bottom` theo phần trăm. Vị trí hiện tại đã né vùng tiêu đề
 (`top` 42–52 %) và hai bàn (hai bên mép dưới).
+
+## Tối ưu hiệu năng vòng 4 — đo FPS thật & chuyển sang CSS
+
+Vòng này xử lý các nguyên nhân lag còn lại sau khi đã tối ưu phần tải trang.
+Nguyên tắc: **đo trước, sửa sau**, và ưu tiên để trình duyệt làm thay JS.
+
+### 1. Bộ điều tiết chất lượng thích ứng (`src/utils/perf.ts`)
+
+`lowEnd` chỉ dò phần cứng **một lần** lúc tải (`hardwareConcurrency`,
+`deviceMemory`). Nhưng máy có thể yếu vì lý do nó không thấy: GPU tích hợp yếu,
+đang chạy tác vụ nặng, màn hình 4K, pin yếu làm CPU hạ xung.
+
+Bộ điều tiết mới đo FPS thật từ chính canvas rồi hạ cấp dần:
+
+| Mức | Kích hoạt | Hiệu ứng |
+| --- | --- | --- |
+| `2` đầy đủ | mặc định | tất cả |
+| `1` vừa (`html.q-lite`) | 3 cửa sổ đo liên tiếp tệ, hoặc TB < 34fps | tắt `backdrop-filter`, bỏ blur lớn, canvas 30fps |
+| `0` tối thiểu (`html.q-min`) | TB < 26fps | tắt hết hiệu ứng trang trí, canvas 24fps |
+
+Chính sách chống "hạ oan":
+- Đo theo **cửa sổ trượt 3 mẫu** (mỗi mẫu 1,6 s) thay vì một mẫu đơn.
+- Chờ **1,8 s** đầu cho trang ổn định rồi mới đo.
+- Sau mỗi lần hạ, nghỉ đo **2,5 giây** (mốc thời gian tuyệt đối, không đếm
+  frame — đếm frame sẽ sai trên máy yếu).
+- **Chỉ hạ, không tự nâng lại** để tránh nhấp nháy lên xuống.
+
+Đã mô phỏng bằng script để kiểm chứng hành vi:
+
+| Tình huống FPS | Kết quả |
+| --- | --- |
+| 60 / 50 / 45 fps | giữ mức 2, không hạ |
+| 38 fps đều | hạ về 1 sau ~7 s |
+| giật xen kẽ 22↔58 fps | hạ về 1 sau ~31 s (không hạ oan ngay) |
+| tệ hẳn 18 fps | hạ 1 rồi 0, cách nhau ~7 s |
+
+### 2. Chuyển animation trang trí từ framer-motion sang CSS
+
+Đây là thay đổi lớn nhất. framer-motion tính toán và **ghi style cho từng phần
+tử trong JS ở mỗi khung hình**. Với cảnh vườn có ~85 phần tử `motion.*` chạy
+vòng lặp vô hạn, đó là hàng nghìn thao tác ghi style mỗi giây trên main thread.
+
+Đã chuyển sang CSS `@keyframes` (chạy trên **compositor thread**, 0 JS/frame):
+
+| Phần tử | Trước | Sau |
+| --- | --- | --- |
+| Mèo (thở, mắt) | 6 `motion` | 0 (CSS `.cat-body`, `.cat-eye`) |
+| Bướm (bay, vỗ cánh) | 6 `motion` | 0 (`.bfly-path`, `.bfly-flap`) |
+| Chim sẻ | 4 `motion` | 0 (`.sparrow-hop`, `.sparrow-bob`) |
+| Đom đóm | 7 `motion` | CSS `.ffly`, tự tắt khi máy yếu |
+| Hai bàn (7 hiệu ứng) | 8 `motion` | **0**, file không còn import framer-motion |
+| Hầu gái (nhịp thở + tóc) | 3 vòng lặp JS | CSS `.maid-breathe`, `.hair-sway` |
+| Ngọn nến (3) | 3 `motion` | CSS `.flame-flick` |
+| Thanh sóng nhạc (6) | 6 `motion` | CSS `.eq-bar` |
+
+Kết quả: `GardenTables.tsx` và `GardenCreatures.tsx` **không còn một phần tử
+`motion.*` nào**; bundle `BirthdayWorld` giảm 52,50 → 50,45 kB (16,10 → 15,72 kB gz).
+
+### 3. Bỏ animation trên thuộc tính gây rasterize / layout
+
+Ba trường hợp đắt nhất đã được thay bằng lớp overlay chỉ đổi `opacity`:
+
+- **`filter: brightness()` trên ảnh hầu gái 440×728** — mỗi khung hình trình
+  duyệt phải rasterize lại toàn bộ ảnh trên CPU. Thay bằng overlay
+  `mix-blend-soft-light` đổi opacity.
+- **`textShadow` trên tiêu đề gradient** — buộc vẽ lại toàn bộ glyph mỗi khung.
+  Thay bằng quầng sáng `blur-2xl` đổi opacity/scale.
+- **`height` của thanh sóng nhạc** — gây layout mỗi khung hình.
+
+### 4. Canvas & GPU
+
+- **God rays**: bỏ `createLinearGradient` trong vòng lặp vẽ (cấp phát + rasterize
+  mỗi frame) → dùng **sprite dựng sẵn** + `drawImage` xoay nhẹ.
+- FPS canvas nền giờ lấy từ `targetFps()` (45 → 30 → 24) thay vì hằng số.
+- Mật độ hạt nhân thêm `qualityScale()`.
+- `BossVfxCanvas`: cờ `GLOW` (bóng mờ `shadowBlur` — thứ đắt nhất trong canvas
+  2D) giờ đọc lại **mỗi frame** theo mức chất lượng, không chốt một lần lúc tải.
+
+### 5. CSS & layout
+
+- `@source` giới hạn phạm vi quét của Tailwind v4 — trước đây nó quét cả `dist/`
+  nên CSS phình dần qua mỗi lần build.
+- `.contain-paint` cho các quầng sáng blur lớn: cô lập vùng repaint.
+- `.will-transform` chỉ đặt cho 2 nhân vật thật sự animate (lạm dụng
+  `will-change` sẽ tốn VRAM và phản tác dụng).
