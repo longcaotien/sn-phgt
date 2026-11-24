@@ -2,7 +2,3 @@ node_modules
 dist
 *.local
 .DS_Store
-
-# Biến môi trường thật — không commit
-.env
-.env.local
