@@ -21,25 +21,67 @@ export const hasBackend = URL.length > 0 && ANON.length > 0;
 let client: SupabaseClient | null = null;
 let loading: Promise<SupabaseClient | null> | null = null;
 
+/** Lỗi cấu hình gần nhất — hiển thị được cho admin biết hỏng ở đâu. */
+let initError: string | null = null;
+
+export function getInitError(): string | null {
+  return initError;
+}
+
 export async function getSupabase(): Promise<SupabaseClient | null> {
   if (!hasBackend) return null;
   if (client) return client;
   if (!loading) {
     loading = (async () => {
-      const { createClient } = await import("@supabase/supabase-js");
-      client = createClient(URL, ANON, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          // Nhận session ngay trong URL sau khi Google chuyển hướng về.
-          detectSessionInUrl: true,
-          flowType: "pkce",
-        },
-      });
-      return client;
+      try {
+        const { createClient } = await import("@supabase/supabase-js");
+        client = createClient(URL, ANON, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            // Nhận session ngay trong URL sau khi Google chuyển hướng về.
+            detectSessionInUrl: true,
+            flowType: "pkce",
+          },
+        });
+        return client;
+      } catch (e) {
+        /*
+         * createClient ném lỗi khi anon key sai định dạng. Nếu để lỗi này
+         * nổi lên thì mọi màn hình chờ sẽ treo vĩnh viễn — đã từng xảy ra.
+         * Bắt lại, ghi nhận, trả null để giao diện hiện thông báo rõ ràng.
+         */
+        initError =
+          e instanceof Error
+            ? `Không tạo được kết nối Supabase: ${e.message}`
+            : "Không tạo được kết nối Supabase.";
+        loading = null;
+        return null;
+      }
     })();
   }
   return loading;
+}
+
+/** Gọi RPC kèm giới hạn thời gian, để màn hình chờ không treo vô hạn. */
+export async function fetchAccess(): Promise<AccessState | null> {
+  const sb = await getSupabase();
+  if (!sb) return null;
+  try {
+    const res = await Promise.race([
+      sb.rpc("access_state"),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Hết thời gian chờ server (8 giây).")), 8000)),
+    ]);
+    if (res.error || !res.data) {
+      initError = res.error?.message ?? "Server trả về dữ liệu rỗng.";
+      return null;
+    }
+    initError = null;
+    return res.data as AccessState;
+  } catch (e) {
+    initError = e instanceof Error ? e.message : "Không gọi được server.";
+    return null;
+  }
 }
 
 /** Đã tạo client chưa (dùng cho các hàm được gọi sau khi trang đã nạp). */
@@ -69,14 +111,6 @@ export const OPEN_ACCESS: AccessState = {
   name: null,
   avatar: null,
 };
-
-export async function fetchAccess(): Promise<AccessState | null> {
-  const sb = await getSupabase();
-  if (!sb) return null;
-  const { data, error } = await sb.rpc("access_state");
-  if (error || !data) return null;
-  return data as AccessState;
-}
 
 export async function signInWithGoogle() {
   const sb = await getSupabase();

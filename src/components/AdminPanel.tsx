@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   fetchAccess,
   geminiKeyApi,
+  getInitError,
   getSupabase,
   hasBackend,
   signInWithGoogle,
@@ -38,6 +39,7 @@ function ago(iso: string | null | undefined) {
 export default function AdminPanel() {
   const [access, setAccess] = useState<AccessState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
 
   const [users, setUsers] = useState<Profile[]>([]);
@@ -58,6 +60,7 @@ export default function AdminPanel() {
   const refresh = useCallback(async () => {
     const a = await fetchAccess();
     setAccess(a);
+    setError(a ? null : getInitError());
     setLoading(false);
     if (a) {
       setSiteOpen(a.site_open);
@@ -70,8 +73,9 @@ export default function AdminPanel() {
   // Nạp trạng thái + cấu hình site
   useEffect(() => {
     void (async () => {
-      const a = await refresh();
-      if (!a?.is_admin) return;
+      try {
+        const a = await refresh();
+        if (!a?.is_admin) return;
       const sb = await getSupabase();
       if (!sb) return;
       const { data } = await sb.from("site_config").select("*").eq("id", 1).single();
@@ -80,13 +84,19 @@ export default function AdminPanel() {
         setMaintenanceMsg(String(data.maintenance_message ?? ""));
         setGeminiEnabled(Boolean(data.gemini_enabled));
       }
-      const k = await geminiKeyApi({ action: "status" });
-      if (!k.error) {
-        setKeyStatus({
-          configured: Boolean(k.configured),
-          masked: String(k.masked ?? ""),
-          source: String(k.source ?? "none"),
-        });
+        const k = await geminiKeyApi({ action: "status" });
+        if (!k.error) {
+          setKeyStatus({
+            configured: Boolean(k.configured),
+            masked: String(k.masked ?? ""),
+            source: String(k.source ?? "none"),
+          });
+        }
+      } catch (e) {
+        // Không để lỗi mạng làm treo trang ở "ĐANG TẢI…".
+        setError(e instanceof Error ? e.message : "Không kết nối được server.");
+      } finally {
+        setLoading(false);
       }
     })();
   }, [refresh]);
@@ -196,6 +206,47 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOi...`}
           <p className="mt-3 text-[12px] leading-relaxed text-sky-200/50">
             Xem hướng dẫn đầy đủ trong <code className="text-cyan-300">README.md</code> → mục “Đăng nhập &amp; quản trị”.
           </p>
+        </Card>
+      </Shell>
+    );
+  }
+
+  // ---------- Không kết nối được server ----------
+  // Trước đây trường hợp này treo mãi ở "ĐANG TẢI…". Nay hiện rõ lỗi.
+  if (error && !access) {
+    return (
+      <Shell>
+        <Card title="KHÔNG KẾT NỐI ĐƯỢC SUPABASE">
+          <p className="mb-3 text-[13px] leading-relaxed text-sky-100/70">
+            Đã cấu hình URL nhưng chưa gọi được server. Kiểm tra theo thứ tự:
+          </p>
+          <ol className="mb-3 space-y-1.5 text-[12.5px] leading-relaxed text-sky-200/65">
+            <li>
+              <strong className="text-sky-100">1.</strong> Đã chạy{" "}
+              <code className="text-cyan-300">0001_init.sql</code> trong SQL Editor chưa? Chưa chạy thì hàm{" "}
+              <code className="text-cyan-300">access_state()</code> không tồn tại.
+            </li>
+            <li>
+              <strong className="text-sky-100">2.</strong> <code className="text-cyan-300">VITE_SUPABASE_ANON_KEY</code>{" "}
+              đã điền đúng chưa? Sai key thì tạo client thất bại ngay.
+            </li>
+            <li>
+              <strong className="text-sky-100">3.</strong> Project có đang bị tạm dừng (paused) không?
+            </li>
+          </ol>
+          <div className="break-words border border-red-400/35 bg-red-950/30 px-2.5 py-2 font-mono text-[11px] text-red-200">
+            {error}
+          </div>
+          <button
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              void refresh();
+            }}
+            className="mt-3 w-full border border-sky-400/40 bg-sky-500/15 py-2.5 font-sys text-[10px] tracking-[0.2em] text-sky-100"
+          >
+            THỬ LẠI
+          </button>
         </Card>
       </Shell>
     );
@@ -562,6 +613,12 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOi...`}
             Key được lưu ở schema <code className="text-cyan-300/70">private</code> — không có policy RLS nào cho
             trình duyệt. Người dùng chỉ gửi prompt qua edge function, không bao giờ nhận lại key.
           </p>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-3 break-words border border-amber-400/40 bg-amber-950/25 px-2.5 py-2 font-mono text-[10.5px] text-amber-200">
+          ⚠ {error}
         </div>
       )}
 
