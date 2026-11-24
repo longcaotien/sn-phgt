@@ -786,3 +786,18 @@ html.q-min .flame-flick { animation: none !important; }
   animation: voiceWave 0.7s ease-in-out infinite;
 }
 html.q-min .voice-wave { animation: none !important; }
+
+/* Khi hầu gái im lặng: lớp "mỉm cười nhẹ" nhấp nháy rất chậm.
+   Chỉ đổi opacity trên một lớp có sẵn => compositor lo, không tốn layout. */
+@keyframes idleSmile {
+  0%, 62%, 100% { opacity: 0; }
+  74%, 88%      { opacity: 0.75; }
+}
+.idle-smile {
+  animation: idleSmile 11s ease-in-out infinite;
+  will-change: opacity;
+}
+html.q-min .idle-smile { animation: none !important; opacity: 0 !important; }
+@media (prefers-reduced-motion: reduce) {
+  .idle-smile { animation: none !important; opacity: 0 !important; }
+}
