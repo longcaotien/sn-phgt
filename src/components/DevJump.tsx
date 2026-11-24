@@ -3,9 +3,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { resetBossML } from "./chapter2/bossAI";
 import {
   GEMINI_MODELS,
+  getGeminiApiKey,
   getGeminiDiag,
   getGeminiModelChoice,
   hasGeminiApiKey,
+  setGeminiApiKey,
   setGeminiModelChoice,
   testGeminiConnection,
   type GeminiModelChoice,
@@ -36,7 +38,9 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
   const [panel, setPanel] = useState<"none" | "dev" | "gemini">("none");
   const [resetNote, setResetNote] = useState(false);
 
+  const [apiKeyInput, setApiKeyInput] = useState(() => getGeminiApiKey());
   const [modelChoice, setModelChoice] = useState<GeminiModelChoice>(() => getGeminiModelChoice());
+  const [showKey, setShowKey] = useState(false);
   const [keyActive, setKeyActive] = useState(() => hasGeminiApiKey());
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -61,13 +65,29 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
     setTimeout(() => setResetNote(false), 1600);
   };
 
-  const handleTest = async () => {
+  const handleSaveAndTest = async () => {
+    const trimmed = apiKeyInput.trim();
+    setGeminiApiKey(trimmed);
     setGeminiModelChoice(modelChoice);
+    setKeyActive(hasGeminiApiKey());
+    window.dispatchEvent(new Event("sl-gemini-key-changed"));
+    if (!trimmed) {
+      setTestMsg({ ok: false, text: "Đã xóa key — quay về chế độ Online ML thuần." });
+      return;
+    }
     setTesting(true);
     setTestMsg(null);
-    const res = await testGeminiConnection();
+    const res = await testGeminiConnection(trimmed);
     setTesting(false);
     setTestMsg({ ok: res.ok, text: res.message });
+  };
+
+  const handleClearKey = () => {
+    setApiKeyInput("");
+    setGeminiApiKey("");
+    setKeyActive(false);
+    setTestMsg({ ok: false, text: "Đã gỡ Gemini API Key khỏi trình duyệt." });
+    window.dispatchEvent(new Event("sl-gemini-key-changed"));
   };
 
   return (
@@ -143,18 +163,27 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
                 </button>
               </div>
               <p className="mb-2 text-[11px] leading-relaxed text-sky-100/75">
-                Chiến thuật Gemini kết hợp cùng <span className="text-cyan-300">Online ML + Markov</span>.
-                API key nằm ở <strong>server</strong> — không ai đọc được từ trình duyệt.
+                Nhập <strong>Gemini API Key</strong> để kết hợp chiến thuật Gemini cùng{" "}
+                <span className="text-cyan-300">Online ML + Markov</span> (tự chuyển model nếu 429/limit).
               </p>
 
-              <div
-                className={`mb-2 border px-2 py-1.5 text-[10px] leading-snug ${
-                  keyActive
-                    ? "border-emerald-400/45 bg-emerald-950/35 text-emerald-200"
-                    : "border-amber-400/40 bg-amber-950/35 text-amber-200"
-                }`}
-              >
-                {keyActive ? "✔ Server đã có API key." : "⚠ Server chưa có API key — nhờ quản trị viên thêm."}
+              <div className="flex items-center gap-1">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="AIzaSy..."
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="min-w-0 flex-1 border border-cyan-500/40 bg-[#020814] px-2.5 py-1.5 font-mono text-[11px] text-cyan-100 placeholder:text-sky-300/30 focus:border-cyan-300 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((s) => !s)}
+                  className="shrink-0 border border-cyan-500/35 bg-cyan-950/40 px-2 py-1.5 font-sys text-[8px] tracking-[0.15em] text-cyan-200 hover:bg-cyan-900/50"
+                >
+                  {showKey ? "ẨN" : "HIỆN"}
+                </button>
               </div>
 
               <div className="mt-2 flex items-center justify-between gap-2">
@@ -180,11 +209,18 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
               <div className="mt-2 flex gap-1.5">
                 <button
                   type="button"
-                  onClick={handleTest}
-                  disabled={testing || !keyActive}
+                  onClick={handleSaveAndTest}
+                  disabled={testing}
                   className="flex-1 border border-cyan-400/60 bg-cyan-500/20 py-1.5 font-sys text-[8px] font-bold tracking-[0.2em] text-cyan-100 transition hover:bg-cyan-500/35 disabled:opacity-50"
                 >
-                  {testing ? "ĐANG KIỂM TRA…" : "KIỂM TRA KẾT NỐI"}
+                  {testing ? "ĐANG KIỂM TRA…" : "LƯU & TEST KEY"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearKey}
+                  className="border border-red-400/40 bg-red-950/40 px-2.5 py-1.5 font-sys text-[8px] tracking-[0.18em] text-red-200 transition hover:bg-red-900/50"
+                >
+                  XÓA
                 </button>
               </div>
 
@@ -222,7 +258,7 @@ export default function DevJump({ onJump }: { onJump: (t: DevTarget) => void }) 
               </div>
 
               <div className="mt-1.5 text-[9px] leading-tight text-sky-200/45">
-                Key do quản trị viên đặt trong trang quản trị, lưu ở server.
+                Key chỉ lưu cục bộ trong <code>localStorage</code> trình duyệt này.
               </div>
             </div>
           </motion.div>

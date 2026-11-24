@@ -2,18 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import BootSequence from "./components/BootSequence";
 import Hero from "./components/Hero";
-import AuthGate from "./components/AuthGate";
 import type { DevTarget } from "./components/DevJump";
-import {
-  OPEN_ACCESS,
-  currentSession,
-  fetchAccess,
-  getSupabase,
-  hasBackend,
-  onAuthChange,
-  signOut,
-  type AccessState,
-} from "./lib/supabase";
 
 // Chương II & Thế giới sinh nhật nặng (nhiều canvas/ảnh) => tách chunk riêng,
 // chỉ tải khi người chơi thực sự bước vào. Lần đầu mở trang nhanh hơn rất nhiều.
@@ -92,74 +81,11 @@ export default function App() {
   const [c2Config, setC2Config] = useState<Extract<DevTarget, { chapter: 2 }> | undefined>(init.c2Init);
   const [showDev, setShowDev] = useState(false);
 
-  // ---- Cổng truy cập (đăng nhập Google + chặn người dùng + công tắc web) ----
-  // null = đang kiểm tra. Khi chưa cấu hình Supabase thì mở luôn như cũ.
-  const [access, setAccess] = useState<AccessState | null>(hasBackend ? null : OPEN_ACCESS);
-  const [gateVariant, setGateVariant] = useState<"signin" | "blocked" | "closed">("signin");
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-
-  const refreshAccess = useCallback(async () => {
-    if (!hasBackend) {
-      setAccess(OPEN_ACCESS);
-      return;
-    }
-    const a = await fetchAccess();
-    /*
-     * FAIL-OPEN: nếu không gọi được backend (Supabase sập, mất mạng, chưa deploy
-     * function) thì vẫn cho vào. Thà web mở còn hơn khoá oan tất cả khách mời
-     * trong ngày sinh nhật. Dữ liệu thật vẫn được RLS bảo vệ ở server.
-     */
-    setAccess(a ?? { ...OPEN_ACCESS, signed_in: true });
-    const sb = a?.signed_in ? await getSupabase() : null;
-    if (sb && a?.signed_in) {
-      const { data } = await sb.auth.getUser();
-      setUserEmail(data.user?.email ?? null);
-      void sb.rpc("touch_last_seen");
-    } else {
-      setUserEmail(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasBackend) return;
-    void currentSession().then(() => refreshAccess());
-    const off = onAuthChange(() => void refreshAccess());
-    // Đổi tab quay lại thì kiểm tra lại — admin vừa chặn là có hiệu lực ngay.
-    const onFocus = () => void refreshAccess();
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-    return () => {
-      off();
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
-  }, [refreshAccess]);
-
-  // Quyết định cổng nào đang chặn (nếu có).
-  const gate: "signin" | "blocked" | "closed" | null = (() => {
-    if (!access) return null; // đang kiểm tra
-    if (access.signed_in && access.blocked) return "blocked";
-    if (!access.site_open) return "closed";
-    if (hasBackend && !access.signed_in) return "signin";
-    return null;
-  })();
-
-  useEffect(() => {
-    if (gate) setGateVariant(gate);
-  }, [gate]);
-
-  // Chỉ admin thấy bảng dev/Gemini. Người thường không tải chunk này.
-  const isAdmin = Boolean(access?.is_admin);
-
   // Chỉ gắn bảng dev sau khi trang đã vẽ xong (tránh tranh CPU lúc khởi động).
   useEffect(() => {
-    if (!isAdmin) {
-      setShowDev(false);
-      return;
-    }
     const t = window.setTimeout(() => setShowDev(true), 1800);
     return () => window.clearTimeout(t);
-  }, [isAdmin]);
+  }, []);
 
   // Nạp trước chunk chương II khi trình duyệt rảnh => chuyển cảnh không bị khựng.
   useEffect(() => {
@@ -208,45 +134,6 @@ export default function App() {
     }
   }, []);
 
-  // Đang kiểm tra quyền => giữ màn hình trống tối, không nháy nội dung.
-  if (!access) {
-    return (
-      <div className="flex h-full w-full items-center justify-center bg-[#02030a]">
-        <div className="font-sys text-[9px] tracking-[0.4em] text-sky-300/50">ĐANG KIỂM TRA…</div>
-      </div>
-    );
-  }
-
-  // Bị chặn / web đóng / chưa đăng nhập => chỉ hiện cổng, không render nội dung.
-  if (gate) {
-    return (
-      <div className="relative h-full w-full bg-[#02030a]">
-        <AuthGate
-          variant={gateVariant}
-          message={access.message}
-          email={userEmail}
-          onRetry={() => void refreshAccess()}
-        />
-        {gate === "blocked" && (
-          <button
-            onClick={() => void signOut()}
-            className="fixed bottom-6 left-1/2 z-[130] -translate-x-1/2 font-sys text-[9px] tracking-[0.2em] text-sky-300/50 underline-offset-4 hover:text-sky-200 hover:underline"
-          >
-            ĐĂNG XUẤT TÀI KHOẢN KHÁC
-          </button>
-        )}
-        {gate === "closed" && access.is_admin && (
-          <a
-            href="./admin.html"
-            className="fixed bottom-6 left-1/2 z-[130] -translate-x-1/2 font-sys text-[9px] tracking-[0.2em] text-amber-300/60 underline-offset-4 hover:text-amber-200 hover:underline"
-          >
-            VÀO TRANG QUẢN TRỊ ĐỂ MỞ LẠI
-          </a>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="relative h-full w-full bg-[#02030a]">
       {booted && chapter === 1 && (
@@ -284,16 +171,6 @@ export default function App() {
         <Suspense fallback={null}>
           <DevJump onJump={handleDevJump} />
         </Suspense>
-      )}
-      {/* Lối vào trang quản trị — chỉ hiện với admin. */}
-      {isAdmin && (
-        <a
-          href="./admin.html"
-          title="Trang quản trị"
-          className="fixed right-3 top-3 z-[95] flex items-center gap-1.5 border border-amber-400/40 bg-[#0a0710]/85 px-2.5 py-1.5 font-sys text-[8px] tracking-[0.2em] text-amber-200/85 backdrop-blur-md transition hover:border-amber-300 hover:text-amber-100"
-        >
-          ⚙ QUẢN TRỊ
-        </a>
       )}
     </div>
   );
