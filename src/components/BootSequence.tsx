@@ -10,14 +10,20 @@ const LINES = [
   "> Cảnh báo: một thực thể cấp SSS đang thức giấc ở tầng sâu nhất…",
 ];
 
+// Trước đây: 1 ký tự mỗi 24ms => riêng phần gõ chữ đã ~5.5s + 3.6s chờ = ~9s.
+// Nay: 1 ký tự mỗi 11ms và màn thông báo tự chuyển sau 2.2s => vào game nhanh gấp đôi.
+const CHAR_DELAY = 11;
+const LINE_GAP = 180;
+const WINDOW_HOLD = 2200;
+
 function Typed({ text, onDone }: { text: string; onDone: () => void }) {
   const [n, setN] = useState(0);
   useEffect(() => {
     if (n >= text.length) {
-      const t = setTimeout(onDone, 380);
+      const t = setTimeout(onDone, LINE_GAP);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => setN(n + 1), 24);
+    const t = setTimeout(() => setN(n + 1), CHAR_DELAY);
     return () => clearTimeout(t);
   }, [n, text, onDone]);
   return <span>{text.slice(0, n)}</span>;
@@ -29,8 +35,8 @@ export default function BootSequence({ onFinish }: { onFinish: () => void }) {
 
   useEffect(() => {
     if (step >= LINES.length) {
-      const a = setTimeout(() => setShowWindow(true), 200);
-      const b = setTimeout(onFinish, 3600);
+      const a = setTimeout(() => setShowWindow(true), 160);
+      const b = setTimeout(onFinish, WINDOW_HOLD);
       return () => {
         clearTimeout(a);
         clearTimeout(b);
@@ -41,8 +47,8 @@ export default function BootSequence({ onFinish }: { onFinish: () => void }) {
   return (
     <motion.div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#02030a]"
-      exit={{ opacity: 0, scale: 1.08, filter: "blur(10px)" }}
-      transition={{ duration: 0.9, ease: "easeInOut" }}
+      exit={{ opacity: 0, scale: 1.06, filter: "blur(8px)" }}
+      transition={{ duration: 0.7, ease: "easeInOut" }}
     >
       <RainCanvas intensity={0.5} />
       <div className="scanline pointer-events-none absolute left-0 right-0 h-24 bg-gradient-to-b from-transparent via-sky-400/10 to-transparent" />
@@ -67,7 +73,7 @@ export default function BootSequence({ onFinish }: { onFinish: () => void }) {
             <motion.div
               initial={{ opacity: 0, scaleY: 0.05, scaleX: 0.6 }}
               animate={{ opacity: 1, scaleY: 1, scaleX: 1 }}
-              transition={{ duration: 0.55, ease: [0.2, 0.9, 0.25, 1] }}
+              transition={{ duration: 0.5, ease: [0.2, 0.9, 0.25, 1] }}
               className="sys-panel sys-cut relative mx-auto overflow-hidden p-1"
             >
               <div className="frame-sweep absolute inset-x-0 top-0 h-px" />

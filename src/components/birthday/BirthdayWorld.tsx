@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import confetti from "canvas-confetti";
 import sceneBg from "../../assets/birthday-scene-bg.webp";
-import maidCake from "../../assets/maid-cake.webp";
 import maidBook from "../../assets/maid-book.webp";
+import maidClap from "../../assets/maid-clap.webp";
 import NatureCanvas from "./NatureCanvas";
+import { CakeFireflies, GardenButterfly, GardenCat, GardenSparrow } from "./GardenCreatures";
 import { CardTable, KnifeTable } from "./GardenTables";
 import { birthdayMusic } from "./birthdayMusic";
+import { sanctuaryMusic } from "../sanctuaryMusic";
+import { maidVoice } from "./maidVoice";
+import { TalkingMaidSprite } from "./TalkingMaidSprite";
 import { MEMORIES, type MemoryBubbleItem } from "./memories";
 
 type Stage = "celebrate" | "fireworks" | "ending";
@@ -45,6 +49,17 @@ export default function BirthdayWorld({
   const [brokenIds, setBrokenIds] = useState<Record<number, boolean>>({});
   const [dentedId, setDentedId] = useState<number | null>(null);
   const [zoomMemory, setZoomMemory] = useState<MemoryBubbleItem | null>(null);
+  const [catLookUp, setCatLookUp] = useState(false);
+  /** Trạng thái giọng hầu gái (đang nói / bị chặn / đã tắt tiếng) */
+  const [voice, setVoice] = useState(maidVoice.getState());
+  /** Hiện bong bóng phụ đề tiếng Nhật khi cô ấy nói */
+  const [voiceCaption, setVoiceCaption] = useState<string | null>(null);
+  /**
+   * Cô hầu gái ngồi đọc sách đứng dậy vỗ tay khi NGHE cô kia nói.
+   * Bật lên khi bắt đầu phát giọng, và tự tắt sau khi nói xong một nhịp
+   * để cô ấy kịp ngồi xuống lại.
+   */
+  const [clapping, setClapping] = useState(false);
 
   const drawingRef = useRef(false);
   const cakeBoxRef = useRef<HTMLDivElement | null>(null);
@@ -70,16 +85,66 @@ export default function BirthdayWorld({
     return () => window.removeEventListener("pointermove", onMove);
   }, [mx, my]);
 
+  // Mèo thỉnh thoảng ngước nhìn bướm => tăng cảm giác sống động
+  useEffect(() => {
+    let alive = true;
+    const loop = () => {
+      if (!alive) return;
+      setCatLookUp(true);
+      window.setTimeout(() => alive && setCatLookUp(false), 2600);
+      window.setTimeout(loop, 9000 + Math.random() * 4000);
+    };
+    const t = window.setTimeout(loop, 2200);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, []);
+
   const clearFwTimers = () => {
     fwTimersRef.current.forEach(clearTimeout);
     fwTimersRef.current = [];
   };
 
+  // Nối giọng hầu gái với nhạc nền để tự hạ nhạc khi cô ấy nói (ducking)
   useEffect(() => {
+    maidVoice.bindMusic((scale) => birthdayMusic.setVolumeScale(scale));
+    maidVoice.preload();
+    return maidVoice.subscribe(setVoice);
+  }, []);
+
+  useEffect(() => {
+    // Nhạc sảnh nhường chỗ cho hộp nhạc của khu vườn (tránh chồng 2 bài).
+    sanctuaryMusic.setMuted(true);
     birthdayMusic.start().catch(() => {});
     return () => {
       clearFwTimers();
       birthdayMusic.stop();
+      maidVoice.stop();
+      // Quay lại sảnh thì bật nhạc sảnh lại nếu người dùng chưa tắt.
+      sanctuaryMusic.setMuted(false);
+    };
+  }, []);
+
+  /**
+   * Câu chào khi bước vào vườn.
+   * Trình duyệt chặn autoplay nếu chưa có thao tác của người dùng — nhưng vì
+   * người chơi phải bấm nút để vào khu vườn, ta vẫn thử phát; nếu bị chặn thì
+   * `voice.needsGesture` bật lên và một nút "chạm để nghe" hiện ra.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const greet = async () => {
+      const ok = await maidVoice.say("entry");
+      if (cancelled || !ok) return;
+      setVoiceCaption("お誕生日おめでとうございます、ご主人様！");
+      fwTimersRef.current.push(window.setTimeout(() => setVoiceCaption(null), 5200));
+    };
+    // Đợi cảnh hiện ra một nhịp rồi mới nói (đỡ "cụt" khi vừa chuyển cảnh).
+    const t = window.setTimeout(greet, 900);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
     };
   }, []);
 
@@ -92,6 +157,19 @@ export default function BirthdayWorld({
       setMusicOn(true);
     }
   };
+
+  /**
+   * Đồng bộ hoạt ảnh vỗ tay với việc cô kia đang nói.
+   * Trễ 600 ms lúc ngồi xuống để động tác không bị "cụt".
+   */
+  useEffect(() => {
+    if (voice.speaking) {
+      setClapping(true);
+      return;
+    }
+    const t = window.setTimeout(() => setClapping(false), 600);
+    return () => window.clearTimeout(t);
+  }, [voice.speaking]);
 
   const launchCelebrationConfetti = useCallback(() => {
     const colors = ["#ffd36a", "#ff5f9f", "#7ce8ff", "#a7f3d0", "#fff6dc", "#fda4af"];
@@ -240,7 +318,7 @@ export default function BirthdayWorld({
 
   return (
     <motion.main
-      className="relative h-full w-full overflow-hidden bg-[#101c16] text-amber-50 select-none"
+      className="cinema-vignette relative h-full w-full overflow-hidden bg-[#101c16] text-amber-50 select-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 1.1 }}
@@ -272,23 +350,45 @@ export default function BirthdayWorld({
       <div className="absolute inset-x-0 top-0 z-40 flex items-center justify-between px-3 py-3 sm:px-8 sm:py-4">
         <button
           onClick={onBackLobby}
-          className="rounded-full border border-white/25 bg-black/35 px-3.5 py-1.5 text-xs font-medium tracking-wider text-amber-50/95 backdrop-blur-md transition hover:border-amber-200/60 hover:bg-black/55"
+          className="glass-warm rounded-full px-3.5 py-1.5 text-xs font-medium tracking-wider text-amber-50/95 transition hover:border-amber-200/60 hover:bg-black/55 hover:text-white"
         >
           ← Sảnh Chính
         </button>
 
-        <div className="hidden items-center gap-2 rounded-full border border-amber-200/30 bg-black/30 px-4 py-1 text-[11px] tracking-[0.22em] text-amber-100/95 backdrop-blur-md sm:flex">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_#fcd34d]" />
+        <div className="glass-warm hidden items-center gap-2 rounded-full px-4 py-1 text-[11px] tracking-[0.22em] text-amber-100/95 sm:flex">
+          <motion.span
+            className="h-1.5 w-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_#fcd34d]"
+            animate={{ opacity: [0.5, 1, 0.5], scale: [0.9, 1.15, 0.9] }}
+            transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+          />
           <span>KHU VƯỜN SINH NHẬT · 30/11</span>
         </div>
 
-        <button
-          onClick={toggleMusic}
-          aria-label={musicOn ? "Tắt nhạc" : "Bật nhạc"}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-amber-200/40 bg-black/35 text-lg text-amber-200 backdrop-blur-md transition hover:scale-105 hover:bg-black/55"
-        >
-          {musicOn ? "♪" : "✕"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Bật/tắt giọng cô hầu gái (tiếng Nhật) */}
+          <button
+            onClick={() => maidVoice.toggleMuted()}
+            aria-label={voice.muted ? "Bật giọng hầu gái" : "Tắt giọng hầu gái"}
+            title={voice.muted ? "Bật giọng hầu gái" : "Tắt giọng hầu gái"}
+            className={`glass-warm relative flex h-10 w-10 items-center justify-center rounded-full text-base transition hover:scale-105 hover:bg-black/55 ${
+              voice.muted ? "text-amber-200/45" : "text-rose-200"
+            }`}
+          >
+            {voice.muted ? "🔇" : "🗣"}
+            {/* Chấm nhấp nháy khi cô ấy đang nói */}
+            {voice.speaking && (
+              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-rose-400 shadow-[0_0_8px_#fb7185]" />
+            )}
+          </button>
+
+          <button
+            onClick={toggleMusic}
+            aria-label={musicOn ? "Tắt nhạc" : "Bật nhạc"}
+            className="glass-warm flex h-10 w-10 items-center justify-center rounded-full text-lg text-amber-200 transition hover:scale-105 hover:bg-black/55 hover:text-amber-100"
+          >
+            {musicOn ? "♪" : "✕"}
+          </button>
+        </div>
       </div>
 
       {/* ============================================================
@@ -310,17 +410,38 @@ export default function BirthdayWorld({
               transition={{ duration: 0.8 }}
               className="pointer-events-none relative z-30 mx-auto max-w-2xl px-4 pt-14 text-center sm:pt-14"
             >
-              <div className="text-[10px] font-semibold uppercase tracking-[0.34em] text-amber-200 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)] sm:text-xs">
-                Thung Lũng Hoàng Hôn · 30 / 11
-              </div>
-              <h1
-                className="mt-1 text-xl font-black tracking-tight text-white sm:text-4xl lg:text-5xl"
-                style={{ textShadow: "0 4px 26px rgba(0,0,0,0.68), 0 0 36px rgba(255,214,120,0.45)" }}
+              {/* Huy hiệu trang trí có đường kẻ hai bên */}
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8 }}
+                className="mx-auto flex w-fit items-center gap-2.5 rounded-full border border-amber-200/40 bg-black/25 px-3.5 py-1 backdrop-blur-sm"
               >
-                {stage === "fireworks"
-                  ? "Happy Birthday Phạm Hoàng Gia Trí!"
-                  : "Chúc Mừng Sinh Nhật Gia Trí"}
-              </h1>
+                <span className="h-px w-6 bg-gradient-to-r from-transparent to-amber-200/80" />
+                <span className="text-[9px] font-semibold uppercase tracking-[0.34em] text-amber-100 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)] sm:text-[11px]">
+                  Thung Lũng Hoàng Hôn · 30 / 11
+                </span>
+                <span className="h-px w-6 bg-gradient-to-l from-transparent to-amber-200/80" />
+              </motion.div>
+
+              {/* Tiêu đề: chữ gradient vàng-hồng + quầng sáng thở */}
+              <div className="relative mt-1.5">
+                <motion.div
+                  aria-hidden
+                  animate={{ opacity: [0.55, 1, 0.55], scale: [0.96, 1.04, 0.96] }}
+                  transition={{ duration: 5.5, repeat: Infinity, ease: "easeInOut" }}
+                  className="pointer-events-none absolute inset-x-0 -top-2 mx-auto h-16 w-4/5 rounded-full bg-[radial-gradient(ellipse,rgba(255,214,120,0.38),transparent_70%)] blur-2xl"
+                />
+                {/* Chữ gradient + drop-shadow tĩnh. Việc animate `textShadow`
+                    buộc trình duyệt vẽ lại toàn bộ glyph mỗi khung (rất đắt vì
+                    chữ có gradient), nên nhịp "thở" được chuyển sang lớp quầng
+                    sáng phía trên — chỉ đổi opacity. */}
+                <h1 className="title-grad-warm relative text-balance text-[22px] font-black leading-tight tracking-tight sm:text-4xl lg:text-5xl">
+                  {stage === "fireworks"
+                    ? "Happy Birthday Phạm Hoàng Gia Trí!"
+                    : "Chúc Mừng Sinh Nhật Gia Trí"}
+                </h1>
+              </div>
               <p
                 className="mx-auto mt-1 max-w-lg text-[11px] font-medium text-amber-50/95 sm:text-sm"
                 style={{ textShadow: "0 2px 12px rgba(0,0,0,0.75)" }}
@@ -337,6 +458,61 @@ export default function BirthdayWorld({
 
             {/* Sân khấu nhân vật & 2 bàn 4K thoáng đãng */}
             <motion.div style={{ x: midX }} className="absolute inset-0">
+              {/* Bụi vàng lơ lửng bắt sáng nắng (chỉ vài hạt, rất nhẹ) */}
+              {[12, 28, 46, 63, 78, 91].map((l, i) => (
+                <span
+                  key={l}
+                  className="mote pointer-events-none absolute h-1 w-1 rounded-full bg-amber-100/90"
+                  style={{
+                    left: `${l}%`,
+                    bottom: `${18 + (i % 3) * 12}%`,
+                    boxShadow: "0 0 8px 2px rgba(255,232,170,0.65)",
+                    animationDuration: `${9 + i * 1.7}s`,
+                    animationDelay: `${i * 1.1}s`,
+                  }}
+                />
+              ))}
+
+              {/* ===== Linh vật sống động trong vườn ===== */}
+              {/* Bướm bay lượn giữa các nhân vật (tránh vùng tiêu đề) */}
+              <GardenButterfly left="30%" top="42%" size={19} delay={0.4} hue="#ffd66e" />
+              <GardenButterfly left="64%" top="36%" size={14} delay={2.6} hue="#ffb3d1" />
+              <GardenButterfly left="45%" top="52%" size={12} delay={4.1} hue="#c8e6ff" />
+
+              {/* Mèo mun nằm ở góc cỏ trái (dưới chân cô hầu gái đọc sách) */}
+              <GardenCat
+                black
+                left="1%"
+                bottom="1.5%"
+                height="clamp(46px, 6.6vh, 86px)"
+                lookingUp={catLookUp}
+                delay={0.2}
+                className="hidden sm:block"
+              />
+              {/* Mèo trắng nép giữa 2 bàn, ngước nhìn bướm */}
+              <GardenCat
+                black={false}
+                left="39%"
+                bottom="2.5%"
+                height="clamp(42px, 6vh, 80px)"
+                flip
+                lookingUp={!catLookUp}
+                delay={1.4}
+              />
+              {/* Mèo mun nhỏ bên phải bàn dao */}
+              <GardenCat
+                black
+                left="75.5%"
+                bottom="3%"
+                height="clamp(38px, 5.2vh, 68px)"
+                flip
+                delay={2.8}
+                className="hidden lg:block"
+              />
+
+              {/* Chim sẻ nhảy nhót trên cỏ */}
+              <GardenSparrow left="33%" bottom="1.5%" size={19} delay={0.8} />
+              <GardenSparrow left="87%" bottom="2.5%" size={16} delay={3.2} flip />
               {/* 1. CÔ HẦU GÁI #2: NGỒI ĐỌC SÁCH DƯỚI GỐC CÂY BÊN TRÁI */}
               <div className="absolute bottom-[34%] left-[-4%] z-10 sm:bottom-[13%] sm:left-[2.5%] lg:left-[4.5%]">
                 {/* Bóng mềm hòa nền cỏ dưới tán cây */}
@@ -364,24 +540,110 @@ export default function BirthdayWorld({
                   aria-label="Cô hầu gái ngồi đọc sách dưới gốc cây"
                   className="group relative block focus:outline-none"
                 >
-                  {/* Chuyển động anime Live2D-style: thở nhẹ + nghiêng theo gió + chớp mắt */}
-                  <motion.div
-                    animate={{
-                      y: [0, -2.5, 0],
-                      rotate: [-0.4, 0.7, -0.4],
-                      scaleY: [1, 1.009, 1],
-                    }}
-                    transition={{ duration: 4.8, repeat: Infinity, ease: "easeInOut" }}
+                  {/* Hào quang ấm phía sau (tách nhân vật khỏi nền) */}
+                  <div className="contain-paint pointer-events-none absolute inset-0 -z-10 scale-110 rounded-full bg-[radial-gradient(ellipse_at_50%_65%,rgba(255,214,150,0.2),transparent_66%)] blur-lg" />
+
+                  {/* Chuyển động anime Live2D-style: thở đa nhịp + nghiêng theo gió + nhún vai */}
+                  <div
                     style={{ transformOrigin: "bottom center" }}
-                    className="relative"
+                    className="maid-breathe will-transform relative"
                   >
-                    <img
-                      src={maidBook}
-                      alt="Cô hầu gái ngồi đọc sách dưới gốc cây"
-                      draggable={false}
-                      className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition group-hover:brightness-105 sm:h-[37vh] lg:h-[42vh]"
+                    {/* Ảnh hầu gái: KHÔNG animate filter/box-shadow ở đây.
+                        Mỗi lần `filter` thay đổi, trình duyệt phải rasterize
+                        lại toàn bộ ảnh 440×728 trên CPU. Thay vào đó nhịp thở
+                        nằm ở lớp transform phía trên, còn ánh nắng ấm được
+                        giả lập bằng một lớp overlay opacity (chỉ compositor). */}
+                    {/* ===== Hai tư thế: ngồi đọc sách ↔ đứng vỗ tay =====
+                        Khi cô hầu gái bên kia nói, cô này đứng dậy vỗ tay
+                        (nghe thay vì đọc), nói xong lại ngồi xuống.
+                        Dùng crossfade + đổi chiều cao ảnh trong cùng một khung
+                        để chuyển cảnh mượt, không bị "nhảy" kích thước. */}
+                    <div className="relative">
+                      {/* Tư thế ngồi (mặc định) */}
+                      <motion.img
+                        src={maidBook}
+                        alt="Cô hầu gái ngồi đọc sách dưới gốc cây"
+                        draggable={false}
+                        animate={{
+                          opacity: clapping ? 0 : 1,
+                          scale: clapping ? 0.94 : 1,
+                          y: clapping ? 6 : 0,
+                        }}
+                        transition={{ duration: 0.45, ease: "easeInOut" }}
+                        className="h-[21vh] w-auto select-none object-contain drop-shadow-[0_14px_26px_rgba(0,0,0,0.55)] transition duration-300 group-hover:brightness-110 sm:h-[37vh] lg:h-[42vh]"
+                      />
+                      {/* Tư thế đứng vỗ tay — chồng lên, ảnh cao hơn nên neo đáy */}
+                      <motion.img
+                        src={maidClap}
+                        alt="Cô hầu gái đứng vỗ tay reo mừng"
+                        draggable={false}
+                        initial={false}
+                        animate={{
+                          opacity: clapping ? 1 : 0,
+                          scale: clapping ? 1 : 0.94,
+                          y: clapping ? 0 : 6,
+                        }}
+                        transition={{ duration: 0.45, ease: "easeInOut" }}
+                        className="pointer-events-none absolute bottom-0 left-1/2 h-[30vh] w-auto max-w-none -translate-x-1/2 select-none object-contain drop-shadow-[0_16px_30px_rgba(0,0,0,0.6)] sm:h-[52vh] lg:h-[58vh]"
+                      />
+                      {/* Sóng "vỗ tay" toả ra từ hai bàn tay khi đang vỗ */}
+                      <AnimatePresence>
+                        {clapping && (
+                          <>
+                            {[0, 1, 2].map((i) => (
+                              <motion.span
+                                key={i}
+                                initial={{ opacity: 0, scale: 0.6 }}
+                                animate={{ opacity: [0.7, 0], scale: [0.6, 1.5] }}
+                                exit={{ opacity: 0 }}
+                                transition={{
+                                  duration: 1.2,
+                                  repeat: Infinity,
+                                  delay: i * 0.4,
+                                  ease: "easeOut",
+                                }}
+                                className="pointer-events-none absolute bottom-[64%] left-1/2 h-6 w-6 -translate-x-1/2 rounded-full border border-amber-200/80"
+                              />
+                            ))}
+                            {/* Chữ "パチパチ" (vỗ tay) nhỏ bay lên */}
+                            <motion.span
+                              initial={{ opacity: 0, y: 4 }}
+                              animate={{ opacity: [0, 1, 0], y: [4, -18, -26] }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 2.4, repeat: Infinity, ease: "easeOut" }}
+                              className="pointer-events-none absolute bottom-[70%] left-[62%] whitespace-nowrap text-[10px] font-bold text-amber-100 drop-shadow-[0_0_8px_rgba(253,224,71,0.9)] sm:text-xs"
+                            >
+                              パチパチ ♪
+                            </motion.span>
+                          </>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    {/* Ánh nắng ấm lay động — chỉ đổi opacity nên miễn phí cho GPU */}
+                    <motion.span
+                      aria-hidden
+                      animate={{ opacity: [0.05, 0.2, 0.05] }}
+                      transition={{ duration: 6.2, repeat: Infinity, ease: "easeInOut" }}
+                      className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_62%_22%,rgba(255,226,160,0.85),transparent_58%)] mix-blend-soft-light"
                     />
-                  </motion.div>
+                    {/* Lọn tóc mai lay động */}
+                    <span
+                      aria-hidden
+                      className="hair-sway pointer-events-none absolute left-[10%] top-[10%] h-[38%] w-[16%]"
+                      style={{
+                        transformOrigin: "top right",
+                        background:
+                          "radial-gradient(ellipse at 30% 40%, rgba(28,22,20,0.55), rgba(28,22,20,0) 68%)",
+                      }}
+                    />
+                    {/* Trang sách lật (vệt trắng quét rất nhẹ) */}
+                    <motion.span
+                      aria-hidden
+                      animate={{ opacity: [0, 0.5, 0], x: [0, 3, 0] }}
+                      transition={{ duration: 5.6, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.4 }}
+                      className="pointer-events-none absolute left-[47%] top-[41%] h-[6%] w-[13%] rounded-sm bg-gradient-to-r from-white/0 via-white/55 to-white/0 blur-[1px]"
+                    />
+                  </div>
                 </button>
               </div>
 
@@ -395,41 +657,121 @@ export default function BirthdayWorld({
                 {/* Bóng mềm hòa mặt cỏ */}
                 <div className="pointer-events-none absolute -bottom-2 left-1/2 h-7 w-56 -translate-x-1/2 rounded-full bg-black/55 blur-lg sm:w-72" />
 
+                {/* Hào quang hoàng hôn ấm áp phía sau nhân vật */}
+                <div className="contain-paint pointer-events-none absolute inset-0 -z-10 rounded-full bg-[radial-gradient(ellipse_at_50%_58%,rgba(255,206,130,0.26),transparent_68%)] blur-xl" />
+
+                {/* ===== Bong bóng thoại tiếng Nhật khi cô ấy nói ===== */}
+                <AnimatePresence>
+                  {voiceCaption && !voice.muted && (
+                    <motion.div
+                      key={voiceCaption}
+                      initial={{ opacity: 0, y: 10, scale: 0.92 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.96 }}
+                      transition={{ type: "spring", stiffness: 220, damping: 22 }}
+                      className="pointer-events-none absolute bottom-[calc(100%-1%)] left-1/2 z-40 w-[min(84vw,290px)] -translate-x-1/2 max-[420px]:w-[72vw]"
+                    >
+                      <div className="relative rounded-2xl border border-rose-200/55 bg-gradient-to-b from-[#fffaf4]/96 to-[#ffeef0]/94 px-3.5 py-2.5 text-center shadow-[0_10px_32px_rgba(0,0,0,0.4)] backdrop-blur-sm">
+                        <div className="mb-1 flex items-center justify-center gap-1.5">
+                          <span className="flex items-end gap-0.5" aria-hidden>
+                            {[0, 1, 2].map((i) => (
+                              <span
+                                key={i}
+                                className="voice-wave w-[2px] rounded-full bg-rose-400"
+                                style={{ height: 6, animationDelay: `${i * 0.15}s` }}
+                              />
+                            ))}
+                          </span>
+                          <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-rose-500/85">
+                            Hầu gái nói
+                          </span>
+                        </div>
+                        <p className="text-[13px] font-semibold leading-snug text-stone-800 max-[420px]:text-[11px]">
+                          {voiceCaption}
+                        </p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-stone-500 max-[420px]:text-[9px]">
+                          {voiceCaption.startsWith("わぁ")
+                            ? "“A, cắt giỏi quá! Đúng là chủ nhân của em.”"
+                            : "“Chúc mừng sinh nhật, thưa chủ nhân!”"}
+                        </p>
+                        <span className="absolute -bottom-[7px] left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-b border-r border-rose-200/55 bg-[#ffeef0]" />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Nút mời chạm khi trình duyệt chặn tự phát giọng */}
+                <AnimatePresence>
+                  {voice.needsGesture && !voice.muted && (
+                    <motion.button
+                      key="voice-unlock"
+                      type="button"
+                      onClick={() => maidVoice.say(stage === "fireworks" ? "cake" : "entry")}
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      className="absolute -top-11 left-1/2 z-40 -translate-x-1/2 whitespace-nowrap rounded-full border border-rose-200/70 bg-rose-50/95 px-3.5 py-1.5 text-[11px] font-bold text-rose-700 shadow-[0_6px_20px_rgba(0,0,0,0.3)] transition hover:scale-105"
+                    >
+                      🔈 Chạm để nghe hầu gái chúc mừng
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+
                 <motion.div
-                  animate={{
-                    y: [0, -3, 0],
-                    rotate: [-0.35, 0.55, -0.35],
-                    scaleY: [1, 1.008, 1],
-                  }}
-                  transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+                  animate={
+                    // Khi cắt bánh xong: nhún lên xuống 2 nhịp reo vui (chạy 1 lần).
+                    // Bình thường: KHÔNG animate bằng JS — nhịp thở do CSS
+                    // `.maid-breathe-slow` lo, để main thread rảnh cho gameplay.
+                    cakeCut
+                      ? { y: [0, -14, 0, -8, 0], rotate: [-0.4, 1.6, -0.8, 1, -0.4], scaleY: [1, 1.02, 1, 1.012, 1] }
+                      : {}
+                  }
+                  transition={cakeCut ? { duration: 1.5, repeat: 1, ease: "easeInOut" } : undefined}
                   style={{ transformOrigin: "bottom center" }}
-                  className="relative"
+                  className={`will-transform relative ${cakeCut ? "" : "maid-breathe-slow"}`}
                 >
-                  <img
-                    src={maidCake}
+                  {/* Hoạt ảnh nói: luân phiên 3 frame ảnh thật (miệng đóng/mở nhẹ/
+                      mở rộng). Các frame khớp pixel tuyệt đối với ảnh gốc nên
+                      đổi frame chỉ vẽ lại vài pixel quanh miệng — không lệch,
+                      không thấy viền, không "nhảy" hình. */}
+                  <TalkingMaidSprite
+                    active={voice.speaking}
                     alt="Cô hầu gái quỳ gối nâng bánh sinh nhật"
-                    draggable={false}
                     className="h-[40vh] w-auto max-w-none select-none object-contain drop-shadow-[0_18px_36px_rgba(0,0,0,0.62)] sm:h-[56vh] lg:h-[61vh]"
+                  />
+                  {/* Tóc mai lay động theo gió hoàng hôn */}
+                  <span
+                    aria-hidden
+                    className="hair-sway-slow pointer-events-none absolute left-[8%] top-[9%] h-[36%] w-[15%]"
+                    style={{
+                      transformOrigin: "top right",
+                      background:
+                        "radial-gradient(ellipse at 30% 40%, rgba(26,20,18,0.5), rgba(26,20,18,0) 68%)",
+                    }}
                   />
 
                   {/* Hào quang nắng vàng hoàng hôn tỏa nhẹ từ sau bánh */}
-                  <div className="pointer-events-none absolute left-[6%] top-[22%] h-[30%] w-[36%] rounded-full bg-[radial-gradient(circle,rgba(255,228,150,0.36),transparent_70%)] blur-xl" />
+                  <div className="contain-paint pointer-events-none absolute left-[6%] top-[22%] h-[30%] w-[36%] rounded-full bg-[radial-gradient(circle,rgba(255,228,150,0.36),transparent_70%)] blur-xl" />
+
+                  {/* Đốm sáng phép thuật tụ quanh bánh kem (chỉ khi chưa cắt) */}
+                  {!cakeCut && <CakeFireflies count={7} />}
 
                   {/* 3 Ngọn lửa nến mảnh & sáng dịu kiểu anime (không thô) */}
                   {CANDLE_POS.map((pos, idx) => (
-                    <motion.span
+                    // Ngọn nến: CSS thay cho animate liên tục. Mỗi ngọn có chu kỳ
+                    // và độ trễ riêng để "rung" tự nhiên, không đồng bộ.
+                    <span
                       key={idx}
-                      animate={{
-                        scale: [1, 1.18, 0.94, 1.12, 1],
-                        rotate: [-4, 5, -3, 3, -4],
-                        opacity: [0.85, 1, 0.8, 1, 0.85],
+                      style={{
+                        left: pos.left,
+                        top: pos.top,
+                        animationDuration: `${0.85 + idx * 0.14}s`,
+                        animationDelay: `${idx * -0.21}s`,
                       }}
-                      transition={{ duration: 0.85 + idx * 0.14, repeat: Infinity, ease: "easeInOut" }}
-                      style={{ left: pos.left, top: pos.top }}
-                      className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 mix-blend-screen"
+                      className="flame-flick pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 mix-blend-screen"
                     >
                       <span className="block h-3 w-1.5 rounded-full bg-gradient-to-t from-amber-500 via-yellow-200 to-white shadow-[0_0_12px_3px_rgba(253,224,71,0.85)] sm:h-3.5 sm:w-1.5" />
-                    </motion.span>
+                    </span>
                   ))}
 
                   {/* Vùng tương tác cắt bánh đặt khớp lên chiếc bánh trên tay cô ấy */}
@@ -493,7 +835,7 @@ export default function BirthdayWorld({
                       <button
                         type="button"
                         onClick={performCut}
-                        className="whitespace-nowrap rounded-full border border-amber-100/70 bg-gradient-to-r from-amber-300 to-rose-300 px-4 py-1.5 text-xs font-extrabold text-stone-900 shadow-[0_6px_24px_rgba(251,191,36,0.55)] transition hover:scale-105 active:scale-95"
+                        className="btn-gold-shine whitespace-nowrap rounded-full border border-amber-100/70 bg-gradient-to-r from-amber-300 via-amber-200 to-rose-300 px-4 py-1.5 text-xs font-extrabold text-stone-900 shadow-[0_8px_28px_rgba(251,191,36,0.6)] transition hover:scale-105 active:scale-95"
                       >
                         ✦ Cắt Bánh Ngay
                       </button>
@@ -513,6 +855,10 @@ export default function BirthdayWorld({
                 />
               </div>
             </motion.div>
+
+            {/* Lớp sương ấm phía trước chân cảnh: tạo chiều sâu điện ảnh */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-[9%] bg-[linear-gradient(to_top,rgba(14,26,20,0.5),rgba(14,26,20,0.16)_55%,transparent)]" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-[13%] bg-[radial-gradient(ellipse_at_50%_100%,rgba(255,206,140,0.2),transparent_72%)] blur-md" />
           </motion.section>
         )}
 
@@ -583,8 +929,42 @@ export default function BirthdayWorld({
               })}
             </div>
 
+            {/* Tim bay lên & bokeh vàng phía sau hộp nhạc */}
+            <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+              {Array.from({ length: 9 }).map((_, i) => (
+                <span
+                  key={`h-${i}`}
+                  className="heart-rise absolute text-rose-300/80"
+                  style={{
+                    left: `${8 + i * 10.5}%`,
+                    bottom: "22%",
+                    fontSize: `${11 + (i % 3) * 6}px`,
+                    animationDuration: `${7 + (i % 4) * 1.8}s`,
+                    animationDelay: `${i * 0.9}s`,
+                    textShadow: "0 0 12px rgba(255,150,190,0.85)",
+                  }}
+                >
+                  {i % 3 === 0 ? "♥" : i % 3 === 1 ? "✦" : "♡"}
+                </span>
+              ))}
+              {[18, 42, 66, 86].map((l, i) => (
+                <motion.span
+                  key={`b-${l}`}
+                  className="absolute rounded-full bg-amber-200/70"
+                  style={{ left: `${l}%`, bottom: `${30 + i * 9}%`, width: 3 + i, height: 3 + i }}
+                  animate={{ opacity: [0.1, 0.7, 0.1], y: [0, -40, 0] }}
+                  transition={{ duration: 6 + i, repeat: Infinity, ease: "easeInOut", delay: i * 0.7 }}
+                />
+              ))}
+            </div>
+
             {/* Hộp nhạc quay chuyển động */}
             <div className="relative z-30 flex flex-col items-center">
+              {/* Đế pha lê phát sáng dưới hộp nhạc */}
+              <div
+                aria-hidden
+                className="contain-paint pointer-events-none absolute -bottom-3 left-1/2 h-10 w-[min(78vw,420px)] -translate-x-1/2 rounded-[50%] bg-[radial-gradient(ellipse,rgba(255,214,140,0.35),transparent_70%)] blur-xl"
+              />
               {musicOn && (
                 <div className="pointer-events-none relative mb-1 flex gap-6 text-amber-200">
                   {["♪", "♫", "♬"].map((n, i) => (
@@ -605,8 +985,9 @@ export default function BirthdayWorld({
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => e.key === "Enter" && toggleMusic()}
-                className="group relative flex cursor-pointer items-center gap-4 rounded-3xl border border-amber-200/35 bg-gradient-to-br from-[#3b2618]/90 via-[#281910]/95 to-[#1b110b]/95 p-4 shadow-[0_24px_60px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,225,170,0.3)] backdrop-blur-md transition hover:scale-[1.02] sm:gap-6 sm:p-6"
+                className="group relative flex cursor-pointer items-center gap-4 overflow-hidden rounded-3xl border border-amber-200/40 bg-gradient-to-br from-[#3b2618]/92 via-[#281910]/95 to-[#1b110b]/97 p-4 shadow-[0_26px_70px_rgba(0,0,0,0.6),0_0_60px_rgba(255,190,90,0.14),inset_0_1px_0_rgba(255,225,170,0.35)] backdrop-blur-md transition duration-500 hover:scale-[1.025] hover:border-amber-200/70 sm:gap-6 sm:p-6"
               >
+                <span className="pointer-events-none absolute inset-0 rounded-3xl bg-[linear-gradient(115deg,transparent_35%,rgba(255,235,190,0.14)_46%,transparent_58%)] bg-[length:220%_100%] btn-gold-shine" />
                 <div className="relative flex h-36 w-36 items-center justify-center rounded-full border-4 border-amber-900/70 bg-black/50 p-1.5 shadow-inner sm:h-48 sm:w-48">
                   <motion.div
                     animate={musicOn ? { rotate: 360 } : { rotate: 0 }}
@@ -628,6 +1009,7 @@ export default function BirthdayWorld({
                       <span className="mt-0.5 text-[8px] font-bold">30 · 11</span>
                     </div>
                     <span className="absolute h-2.5 w-2.5 rounded-full bg-stone-900 ring-2 ring-amber-200" />
+                    <span className="pointer-events-none absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,transparent_0deg,rgba(255,255,255,0.05)_40deg,transparent_90deg,transparent_180deg,rgba(255,255,255,0.04)_220deg,transparent_280deg)]" />
                   </motion.div>
 
                   <motion.div
@@ -662,19 +1044,21 @@ export default function BirthdayWorld({
 
                   <div className="my-3 flex h-7 items-end gap-1.5">
                     {[0.6, 1, 0.75, 0.95, 0.55, 0.85].map((h, i) => (
-                      <motion.span
+                      // Thanh sóng nhạc: dùng CSS thay vì animate `height` bằng JS.
+                      // `height` gây layout mỗi khung hình (đắt nhất trong các
+                      // thuộc tính animate); CSS keyframes trên thanh nhỏ thì
+                      // chỉ tốn vài phần trăm một frame.
+                      <span
                         key={i}
-                        animate={
-                          musicOn
-                            ? { height: ["25%", `${h * 100}%`, "35%", `${h * 85}%`] }
-                            : { height: "20%" }
-                        }
-                        transition={
-                          musicOn
-                            ? { duration: 0.7 + i * 0.12, repeat: Infinity, repeatType: "reverse" }
-                            : { duration: 0.3 }
-                        }
-                        className="w-2 rounded-t-full bg-gradient-to-t from-amber-400 to-rose-300"
+                        className={`w-2 rounded-t-full bg-gradient-to-t from-amber-400 to-rose-300 ${
+                          musicOn ? "eq-bar" : ""
+                        }`}
+                        style={{
+                          height: musicOn ? `${h * 100}%` : "20%",
+                          animationDuration: `${0.7 + i * 0.12}s`,
+                          animationDelay: `${i * 0.08}s`,
+                          ["--eq-max" as string]: `${Math.round(h * 100)}%`,
+                        }}
                       />
                     ))}
                   </div>
@@ -694,14 +1078,14 @@ export default function BirthdayWorld({
                   <button
                     type="button"
                     onClick={handleReplayCelebrate}
-                    className="rounded-full border border-amber-200/45 bg-black/45 px-5 py-2 text-xs font-semibold text-amber-100 backdrop-blur-md transition hover:bg-black/65"
+                    className="glass-warm rounded-full px-5 py-2 text-xs font-semibold text-amber-100 transition hover:scale-105 hover:text-white"
                   >
                     ✦ Quay lại khu vườn
                   </button>
                   <button
                     type="button"
                     onClick={onBackLobby}
-                    className="rounded-full bg-gradient-to-r from-amber-300 to-emerald-200 px-5 py-2 text-xs font-extrabold text-stone-900 shadow-lg transition hover:scale-105"
+                    className="btn-gold-shine rounded-full bg-gradient-to-r from-amber-300 via-amber-200 to-emerald-200 px-5 py-2 text-xs font-extrabold text-stone-900 shadow-[0_8px_28px_rgba(251,191,36,0.45)] transition hover:scale-105 active:scale-95"
                   >
                     Về Sảnh Chính
                   </button>
@@ -736,14 +1120,37 @@ export default function BirthdayWorld({
               exit={{ scale: 0.9, y: 12, opacity: 0 }}
               transition={{ type: "spring", stiffness: 180, damping: 18 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative w-full max-w-lg rounded-3xl border border-amber-200/45 bg-gradient-to-b from-[#fffaf0] to-[#f8ebd2] p-6 text-stone-800 shadow-[0_24px_80px_rgba(0,0,0,0.5)] sm:p-8"
+              className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-amber-200/60 bg-gradient-to-b from-[#fffdf7] via-[#fff8e9] to-[#f7e7cb] p-6 text-stone-800 shadow-[0_28px_90px_rgba(0,0,0,0.55),0_0_80px_rgba(255,200,120,0.28)] sm:p-8"
             >
-              <div className="text-xs font-bold uppercase tracking-[0.26em] text-rose-700/80">
+              {/* Viền chỉ vàng mảnh bên trong */}
+              <div className="pointer-events-none absolute inset-2 rounded-[20px] border border-amber-600/20" />
+              {/* Góc trang trí */}
+              {[
+                "left-3 top-3 border-l-2 border-t-2",
+                "right-3 top-3 border-r-2 border-t-2",
+                "left-3 bottom-3 border-l-2 border-b-2",
+                "right-3 bottom-3 border-r-2 border-b-2",
+              ].map((c) => (
+                <span key={c} className={`pointer-events-none absolute h-4 w-4 rounded-sm border-amber-500/45 ${c}`} />
+              ))}
+
+              {/* Con dấu sáp đỏ */}
+              <motion.div
+                initial={{ scale: 0, rotate: -30 }}
+                animate={{ scale: 1, rotate: -8 }}
+                transition={{ delay: 0.5, type: "spring", stiffness: 200, damping: 12 }}
+                className="absolute right-6 top-6 flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-rose-600 to-rose-800 text-[10px] font-black text-rose-100 shadow-[0_6px_18px_rgba(150,20,40,0.45)] ring-2 ring-rose-300/40"
+              >
+                30·11
+              </motion.div>
+
+              <div className="relative text-xs font-bold uppercase tracking-[0.26em] text-rose-700/80">
                 Thiệp Sinh Nhật · 30/11
               </div>
-              <h2 className="mt-1 text-xl font-black text-stone-900 sm:text-2xl">
+              <h2 className="relative mt-1 pr-14 text-xl font-black text-stone-900 sm:text-2xl">
                 Gửi Phạm Hoàng Gia Trí,
               </h2>
+              <div className="relative mt-3 h-px w-full bg-gradient-to-r from-amber-700/30 via-amber-600/15 to-transparent" />
               <div className="mt-4 space-y-3 text-sm leading-relaxed text-stone-700 sm:text-[15px]">
                 <motion.p initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
                   Chúc mừng sinh nhật tuổi mới! Sau khi đã mạnh mẽ chinh phục cả ba bức tượng và hạ gục Tượng Thần Mỉm Cười,
@@ -792,7 +1199,7 @@ export default function BirthdayWorld({
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-sm overflow-hidden rounded-3xl border border-amber-200/40 bg-[#18221e]/95 p-4 text-center shadow-2xl"
+              className="w-full max-w-sm overflow-hidden rounded-3xl border border-amber-200/45 bg-gradient-to-b from-[#1d2a24]/97 to-[#111a16]/98 p-4 text-center shadow-[0_28px_80px_rgba(0,0,0,0.6),0_0_60px_rgba(255,200,120,0.16)]"
             >
               <div className="relative aspect-square w-full overflow-hidden rounded-2xl border border-white/20 bg-black/30">
                 {!brokenIds[zoomMemory.id] ? (
@@ -807,7 +1214,8 @@ export default function BirthdayWorld({
                   </div>
                 )}
               </div>
-              <div className="mt-3 text-sm font-bold text-amber-100">{zoomMemory.caption}</div>
+              <div className="mx-auto mt-3 h-px w-2/3 bg-gradient-to-r from-transparent via-amber-300/45 to-transparent" />
+              <div className="mt-2 text-sm font-bold text-amber-50">{zoomMemory.caption}</div>
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
