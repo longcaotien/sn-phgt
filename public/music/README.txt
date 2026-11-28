@@ -8,8 +8,14 @@ Không cần sửa code. Chỉ cần copy file nhạc vào thư mục này,
 │  TÊN FILE               DÙNG CHO CHỖ NÀO                    │
 ├─────────────────────────────────────────────────────────────┤
 │  sanctuary.mp3          SẢNH CHÍNH (màn hình mở đầu)        │
+│  chapter2.mp3           CHƯƠNG II (màn chơi mở đầu:         │
+│                         Bảng Nhiệm Vụ → Cầu Nguyện →        │
+│                         Né Tượng → Boss)                    │
 │  birthday.mp3           THẾ GIỚI SINH NHẬT (khu vườn 30/11) │
 └─────────────────────────────────────────────────────────────┘
+
+Không có chapter2.mp3 thì chương II phát nền tổng hợp: drone
+trầm La thứ + nhịp gõ chậm mỗi 1,5 giây.
 
 File nào không có thì chỗ đó tự phát nhạc tổng hợp từ Web Audio
 (không lỗi, chỉ là giai điệu đơn giản hơn).
