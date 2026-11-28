@@ -7,6 +7,7 @@ import jinwoo from "../assets/jinwoo.webp";
 import bg from "../assets/bg.webp";
 import natureBg from "../assets/birthday-scene-bg.webp";
 import { bossIdle } from "./chapter2/assets";
+import { sanctuaryMusic } from "./sanctuaryMusic";
 
 const STATS = [
   { k: "SỨC MẠNH", v: 96 },
@@ -58,6 +59,24 @@ export default function Hero({
     t = setTimeout(() => setBolt(1), 900);
     loop();
     return () => clearTimeout(t);
+  }, []);
+
+  // ---- Nhạc nền sảnh ----
+  // Trình duyệt chặn tự phát trước tương tác đầu tiên, nên "mồi" một lần rồi
+  // để người dùng bật/tắt bằng nút nhỏ ở góc.
+  const [musicOn, setMusicOn] = useState(false);
+  const [musicKnown, setMusicKnown] = useState(false);
+  useEffect(() => {
+    sanctuaryMusic.setMuted(false);
+    const off = sanctuaryMusic.onChange((p) => {
+      setMusicOn(p);
+      setMusicKnown(true);
+    });
+    sanctuaryMusic.arm();
+    return () => {
+      off();
+      sanctuaryMusic.pause();
+    };
   }, []);
 
   // ---- ARISE ----
@@ -490,6 +509,23 @@ export default function Hero({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Bật/tắt nhạc nền sảnh. */}
+      {musicKnown && (
+        <button
+          onClick={() => sanctuaryMusic.toggle()}
+          title={musicOn ? "Tắt nhạc nền" : "Bật nhạc nền"}
+          aria-label={musicOn ? "Tắt nhạc nền" : "Bật nhạc nền"}
+          className={`fixed right-3 top-3 z-40 flex h-8 items-center gap-1.5 border px-2.5 font-sys text-[8px] tracking-[0.18em] backdrop-blur-md transition ${
+            musicOn
+              ? "border-sky-400/45 bg-[#05101f]/80 text-sky-200/90 hover:border-sky-300 hover:text-sky-100"
+              : "border-white/15 bg-[#05101f]/70 text-sky-200/45 hover:text-sky-200/80"
+          }`}
+        >
+          <span className="text-[11px] leading-none">{musicOn ? "♪" : "♪̸"}</span>
+          <span>{musicOn ? "NHẠC" : "TẮT"}</span>
+        </button>
+      )}
     </motion.main>
   );
 }

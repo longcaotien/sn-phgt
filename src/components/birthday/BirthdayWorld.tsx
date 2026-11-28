@@ -8,6 +8,7 @@ import NatureCanvas from "./NatureCanvas";
 import { CakeFireflies, GardenButterfly, GardenCat, GardenSparrow } from "./GardenCreatures";
 import { CardTable, KnifeTable } from "./GardenTables";
 import { birthdayMusic } from "./birthdayMusic";
+import { sanctuaryMusic } from "../sanctuaryMusic";
 import { maidVoice } from "./maidVoice";
 import { TalkingMaidSprite } from "./TalkingMaidSprite";
 import { MEMORIES, type MemoryBubbleItem } from "./memories";
@@ -113,11 +114,15 @@ export default function BirthdayWorld({
   }, []);
 
   useEffect(() => {
+    // Nhạc sảnh nhường chỗ cho hộp nhạc của khu vườn (tránh chồng 2 bài).
+    sanctuaryMusic.setMuted(true);
     birthdayMusic.start().catch(() => {});
     return () => {
       clearFwTimers();
       birthdayMusic.stop();
       maidVoice.stop();
+      // Quay lại sảnh thì bật nhạc sảnh lại nếu người dùng chưa tắt.
+      sanctuaryMusic.setMuted(false);
     };
   }, []);
 
