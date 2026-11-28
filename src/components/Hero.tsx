@@ -510,8 +510,7 @@ export default function Hero({
         )}
       </AnimatePresence>
 
-      {/* Bật/tắt nhạc nền sảnh. Ẩn cho tới khi biết trạng thái thật để
-          không hiện nút trong tích tắc rồi biến mất. */}
+      {/* Bật/tắt nhạc nền sảnh. */}
       {musicKnown && (
         <button
           onClick={() => sanctuaryMusic.toggle()}
