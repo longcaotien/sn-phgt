@@ -11,6 +11,8 @@ import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import RainCanvas from "../RainCanvas";
 import { GoldenKeyIcon } from "../PortalGate";
 import Statue, { type Attack, type Gaze } from "./Statue";
+import { chapter2Sfx } from "./sfx";
+import { chapter2Music } from "./chapter2Music";
 import BossFight, { BOSS_MAX_HP, type BossStats } from "./BossFight";
 import { PlayerBehaviorTracker, type PredictionSnapshot } from "./bossAI";
 import { avatar, bossIdle, hall, heroKneel, heroStand, s1, s2, s3 } from "./assets";
@@ -292,10 +294,37 @@ export default function Chapter2({
     return () => cancelAnimationFrame(raf);
   }, [phase, runId, damage]);
 
+  // ---------- Nhạc nền chương 2 ----------
+  const [musicOn, setMusicOn] = useState(false);
+  const [sfxMuted, setSfxMuted] = useState(false);
+  useEffect(() => {
+    chapter2Music.arm();
+    const off = chapter2Music.onChange(setMusicOn);
+    return () => {
+      off();
+      chapter2Music.pause();
+    };
+  }, []);
+
+  // Nhạc nền theo giai đoạn: im ở màn tiêu đề (để nghe rõ không khí),
+  // chạy từ lúc cầu nguyện, hạ xuống khi vào trận boss.
+  useEffect(() => {
+    if (phase === "pray" || phase === "awaken" || phase === "dodge") {
+      chapter2Music.setDucked(false);
+      void chapter2Music.start();
+    } else if (phase === "boss") {
+      chapter2Music.setDucked(true);
+      void chapter2Music.start();
+    } else if (phase === "dead" || phase === "clear") {
+      chapter2Music.pause();
+    }
+  }, [phase]);
+
   // ---------- Thức tỉnh ----------
   useEffect(() => {
     if (phase !== "awaken") return;
     setAwake(true);
+    chapter2Sfx.awaken();
     triggerShake(14);
     setStrikeKey((k) => k + 1);
     const t = setTimeout(() => setPhase("dodge"), 3400);
@@ -343,6 +372,7 @@ export default function Chapter2({
         threatWarnAtRef.current = performance.now();
         const aiLocked = (double ? double.aiUsed : picked.aiUsed) && i >= 2;
         setThreatBoth({ lanes, mode: "warn", id: i, aiLocked });
+        chapter2Sfx.warn();
         if (double) showPop("ĐỢT KÉP!", "warn");
 
         // Đợt 9 & 11: tượng thần đọc vị bước né sớm và đổi hướng 1 lần (vẫn cho 580ms phản ứng)
@@ -359,6 +389,7 @@ export default function Chapter2({
             publishPred(retarget.predicted);
             threatWarnAtRef.current = performance.now();
             setThreatBoth({ lanes, mode: "warn", id: i, aiLocked: true });
+            chapter2Sfx.warn();
             showPop("ĐỔI HƯỚNG!", "warn");
             await sleep(580);
           } else {
@@ -373,12 +404,15 @@ export default function Chapter2({
         setThreatBoth(strike);
         setStrikeKey((k) => k + 1);
         triggerShake(10);
+        chapter2Sfx.strike(1);
         const hit = lanes.includes(laneRef.current);
         if (hit) {
+          chapter2Sfx.hurt();
           if (damage()) showPop("-1 HP", "hit");
         } else if (performance.now() - escapeRef.current < 520) {
           perfectCount++;
           setPerfects(perfectCount);
+          chapter2Sfx.perfect();
           showPop(aiLocked ? "PHÁ ĐỌC VỊ!" : "NÉ HOÀN HẢO!", "perfect");
         } else {
           showPop("NÉ!", "dodge");
@@ -403,6 +437,7 @@ export default function Chapter2({
           setThreatBoth({ lanes: double.second, mode: "strike", id: i, aiLocked: true });
           setStrikeKey((k) => k + 1);
           triggerShake(10);
+          chapter2Sfx.strike(1.15);
           if (double.second.includes(laneRef.current)) {
             if (damage()) showPop("-1 HP", "hit");
           } else if (performance.now() - escapeRef.current < 520) {
@@ -621,6 +656,38 @@ export default function Chapter2({
             </div>
           ))}
         </motion.div>
+
+        {/* Nút âm thanh: nhạc nền + hiệu ứng rời nhau, vì có người muốn
+            nghe tiếng đánh mà không nghe nhạc, hoặc ngược lại. */}
+        <div className="absolute right-2 top-2 z-40 flex gap-1">
+          <button
+            onClick={() => {
+              chapter2Music.toggle();
+            }}
+            title={musicOn ? "Tắt nhạc nền" : "Bật nhạc nền"}
+            className={`flex h-7 items-center gap-1 border px-2 font-sys text-[8px] tracking-[0.16em] backdrop-blur-md transition ${
+              musicOn
+                ? "border-sky-400/45 bg-[#05101f]/80 text-sky-200/90 hover:text-sky-100"
+                : "border-white/15 bg-[#05101f]/70 text-sky-200/40 hover:text-sky-200/75"
+            }`}
+          >
+            {musicOn ? "♪ NHẠC" : "♪ TẮT"}
+          </button>
+          <button
+            onClick={() => {
+              const muted = chapter2Sfx.toggle();
+              setSfxMuted(muted);
+            }}
+            title={sfxMuted ? "Bật hiệu ứng âm thanh" : "Tắt hiệu ứng âm thanh"}
+            className={`flex h-7 items-center gap-1 border px-2 font-sys text-[8px] tracking-[0.16em] backdrop-blur-md transition ${
+              !sfxMuted
+                ? "border-amber-400/45 bg-[#1a1005]/80 text-amber-200/90 hover:text-amber-100"
+                : "border-white/15 bg-[#1a1005]/70 text-amber-200/40 hover:text-amber-200/75"
+            }`}
+          >
+            {sfxMuted ? "🔇 SFX" : "🔊 SFX"}
+          </button>
+        </div>
 
         {/* Ánh đỏ Hồng Ngục */}
         <div
